@@ -1,6 +1,7 @@
 import { getActiveModel, getModel } from "./db";
 import { scoreModelBatch, type FeatureName, type ModelScore, type StoredModelPayload } from "./modelEngine";
-import { analyzePcap, type FlowFeature } from "./trafficAnalysis";
+import { type FlowFeature } from "./trafficAnalysis";
+import { analyzePcapWithNfstream } from "./nfstream";
 import { labelName, type AnnotationSetSnapshot } from "@shared/annotationSets";
 
 function riskLevel(score: number) {
@@ -37,7 +38,7 @@ function detailFlow(entry: ModelScore & { flow: FlowFeature }, annotationSet: An
 export async function inspectPcap(userId: number, fileName: string, buffer: Buffer, requestedModelId?: number) {
   const model = requestedModelId ? await getModel(userId, requestedModelId) : await getActiveModel(userId);
   if (!model) throw new Error(requestedModelId ? "指定模型不存在或无访问权限" : "当前用户没有已激活的检测模型");
-  const analysis = analyzePcap(buffer); const payload = JSON.parse(model.modelJson) as StoredModelPayload; const features = JSON.parse(model.featureSetJson) as FeatureName[];
+  const analysis = await analyzePcapWithNfstream(buffer); const payload = JSON.parse(model.modelJson) as StoredModelPayload; const features = JSON.parse(model.featureSetJson) as FeatureName[];
   const annotationSet = model.annotationSnapshotJson ? JSON.parse(model.annotationSnapshotJson) as AnnotationSetSnapshot : { name: "历史标注集", labels: [] };
   const scores = await scoreModelBatch(analysis.flows, features, payload); const scored = analysis.flows.map((flow, index) => ({ flow, ...scores[index] })).sort((left, right) => right.score - left.score);
   const flows = scored.map(entry => detailFlow(entry, annotationSet)); const classDistribution = flows.reduce<Record<string, number>>((distribution, entry) => { distribution[entry.classification.predictedClass] = (distribution[entry.classification.predictedClass] ?? 0) + 1; return distribution; }, {});

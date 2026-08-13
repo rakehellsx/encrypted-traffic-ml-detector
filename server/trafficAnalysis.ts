@@ -27,6 +27,7 @@ export type FlowFeature = {
   ja3: string | null;
   sniVisibility: "visible" | "not_observed";
   sni: string | null;
+  nfstream?: { key: string; bidirectional_packets: number; bidirectional_bytes: number; duration_ms: number; application_name?: string | null; splt_direction: number[]; splt_ps: number[]; splt_piat_ms: number[] } | null;
 };
 
 export type PcapAnalysis = {
