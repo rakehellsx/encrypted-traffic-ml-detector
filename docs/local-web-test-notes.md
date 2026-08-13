@@ -41,3 +41,5 @@
 ## 外部预览验证
 
 已通过临时公开预览地址重新加载首页。八个功能模块导航、首页统计卡片、检测任务空状态和工作流引导均能从外部代理访问。该预览依赖当前本地服务会话，不替代目标服务器的持久 Docker Compose 部署；目标服务器的 SSH 服务恢复后仍应按照 `docs/DEPLOYMENT.md` 执行完整部署、迁移和端到端验收。
+
+外部预览的 `GET /api/v1/detect/health` 已返回 HTTP 200，响应声明 `status: ok` 和 `engine: Abonnen/Malicious_TLS_Detection`，确认公开代理可达独立检测服务路由。
