@@ -1,33 +1,20 @@
-import { useAuth } from "@/_core/hooks/useAuth";
+import { PageHeader } from "@/components/PageHeader";
+import { StatCard } from "@/components/StatCard";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
-import { Streamdown } from 'streamdown';
+import { Skeleton } from "@/components/ui/skeleton";
+import { trpc } from "@/lib/trpc";
+import { Activity, ArrowUpRight, BrainCircuit, Database, FileScan, Radar, ShieldAlert } from "lucide-react";
+import { useLocation } from "wouter";
 
-/**
- * All content in this page are only for example, replace with your own feature implementation
- * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
- */
+function scoreTone(score: number) { return score >= 0.7 ? "text-rose-200 bg-rose-400/10 border-rose-400/20" : score >= 0.4 ? "text-amber-200 bg-amber-400/10 border-amber-400/20" : "text-emerald-200 bg-emerald-400/10 border-emerald-400/20"; }
+
 export default function Home() {
-  // The useAuth hook provides authentication state.
-  // To implement login/logout, call logout(), or start login from an event
-  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
-  // startLogin() during render (no href={startLogin()}) — it mints a one-time
-  // nonce cookie and must run only at the moment of navigation.
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
-
-  // If theme is switchable in App.tsx, we can implement theme toggling like this:
-  // const { theme, toggleTheme } = useTheme();
-
-  return (
-    <div className="min-h-screen flex flex-col">
-      <main>
-        {/* Example: lucide-react for icons */}
-        <Loader2 className="animate-spin" />
-        Example Page
-        {/* Example: Streamdown for markdown rendering */}
-        <Streamdown>Any **markdown** content</Streamdown>
-        <Button variant="default">Example Button</Button>
-      </main>
-    </div>
-  );
+  const [, navigate] = useLocation();
+  const { data, isLoading } = trpc.dashboard.overview.useQuery();
+  return <><PageHeader eyebrow="安全态势" title="加密流量检测控制台" description="基于流统计、SPLT、TLS/QUIC 可见元数据的离线机器学习分析平台。" action={<div className="flex gap-2"><Button onClick={() => navigate("/upload")} className="bg-cyan-300 text-slate-950 hover:bg-cyan-200"><FileScan className="mr-2 h-4 w-4" />上传训练数据</Button><Button variant="outline" onClick={() => navigate("/detections")} className="border-white/10 bg-white/[0.03] text-slate-200 hover:bg-white/[0.08]"><Radar className="mr-2 h-4 w-4" />启动检测</Button></div>} />
+    <section className="grid gap-4 md:grid-cols-3">{isLoading ? Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-40 rounded-2xl bg-white/[0.04]" />) : <><StatCard label="已上传 PCAP" value={data?.datasetCount ?? 0} detail="含已解析与待标注的数据集" icon={Database} tone="cyan" /><StatCard label="模型版本" value={data?.modelCount ?? 0} detail={data?.activeModel ? `当前激活：${data.activeModel.versionName}` : "尚未训练模型"} icon={BrainCircuit} tone="violet" /><StatCard label="最近检测任务" value={data?.detectionCount ?? 0} detail="保留逐流评分及可解释原因" icon={Activity} tone="amber" /></>}</section>
+    <section className="mt-6 grid gap-5 xl:grid-cols-[1.4fr_.9fr]"><div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-5"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold text-white">最近检测结果</p><p className="mt-1 text-xs text-slate-500">按检测任务的创建时间排序</p></div><Button variant="ghost" onClick={() => navigate("/detections")} className="text-xs text-cyan-200 hover:text-cyan-100">查看全部 <ArrowUpRight className="ml-1 h-3.5 w-3.5" /></Button></div><div className="mt-5 space-y-2">{isLoading ? <Skeleton className="h-28 bg-white/[0.04]" /> : data?.recentTasks?.length ? data.recentTasks.map(task => <div key={task.id} className="flex flex-col gap-3 rounded-xl border border-white/[0.06] bg-[#081421]/50 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-medium text-slate-200">{task.fileName}</p><p className="mt-1 text-xs text-slate-500">{task.totalFlows.toLocaleString()} 条流 · {new Date(task.createdAt).toLocaleString()}</p></div><div className="flex items-center gap-3"><Badge variant="outline" className={scoreTone(task.averageRisk)}>平均风险 {(task.averageRisk * 100).toFixed(0)}%</Badge><span className="text-xs text-rose-300">{task.highRiskFlows} 高风险</span></div></div>) : <div className="grid min-h-44 place-items-center rounded-xl border border-dashed border-white/[0.1] text-center"><div><ShieldAlert className="mx-auto h-7 w-7 text-slate-600" /><p className="mt-3 text-sm text-slate-400">尚无检测任务</p><Button variant="link" onClick={() => navigate("/detections")} className="mt-1 text-cyan-200">上传待检测 PCAP</Button></div></div>}</div></div>
+      <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-cyan-300/[0.09] to-white/[0.02] p-5"><p className="text-sm font-semibold text-white">工作流指引</p><div className="mt-5 space-y-4">{[{ n: "01", title: "导入训练数据", text: "上传良性和恶意 PCAP，自动解析流特征。", path: "/upload" }, { n: "02", title: "标注并训练", text: "选择特征集和算法，生成可复用模型版本。", path: "/training" }, { n: "03", title: "离线检测分析", text: "选择模型运行评分，调查高风险流。", path: "/detections" }].map(step => <button key={step.n} onClick={() => navigate(step.path)} className="group flex w-full gap-3 rounded-xl p-2 text-left hover:bg-white/[0.05]"><span className="font-mono text-xs text-cyan-300">{step.n}</span><span><span className="block text-sm font-medium text-slate-200 group-hover:text-white">{step.title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{step.text}</span></span></button>)}</div></div></section>
+  </>;
 }

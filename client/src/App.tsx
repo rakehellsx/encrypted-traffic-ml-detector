@@ -2,41 +2,16 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
+import DashboardLayout from "./components/DashboardLayout";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import Datasets from "./pages/Datasets";
+import Detections from "./pages/Detections";
 import Home from "./pages/Home";
+import Models from "./pages/Models";
+import Training from "./pages/Training";
+import Upload from "./pages/Upload";
 
-function Router() {
-  // make sure to consider if you need authentication for certain routes
-  return (
-    <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
-    </Switch>
-  );
-}
-
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
-
-function App() {
-  return (
-    <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
-      </ThemeProvider>
-    </ErrorBoundary>
-  );
-}
-
-export default App;
+function Shell({ children }: { children: React.ReactNode }) { return <DashboardLayout>{children}</DashboardLayout>; }
+function Router() { return <Switch><Route path="/"><Shell><Home /></Shell></Route><Route path="/upload"><Shell><Upload /></Shell></Route><Route path="/datasets"><Shell><Datasets /></Shell></Route><Route path="/training"><Shell><Training /></Shell></Route><Route path="/models"><Shell><Models /></Shell></Route><Route path="/detections"><Shell><Detections /></Shell></Route><Route path="/404" component={NotFound} /><Route component={NotFound} /></Switch>; }
+export default function App() { return <ErrorBoundary><ThemeProvider defaultTheme="dark"><TooltipProvider><Toaster theme="dark" richColors position="top-right" /><Router /></TooltipProvider></ThemeProvider></ErrorBoundary>; }

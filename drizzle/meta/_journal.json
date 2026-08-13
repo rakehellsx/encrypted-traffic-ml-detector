@@ -1,5 +1,27 @@
 {
   "version": "7",
   "dialect": "mysql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1786601663105,
+      "tag": "0000_lying_gorgon",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1786602164807,
+      "tag": "0001_brave_grim_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1786602855863,
+      "tag": "0002_natural_fenris",
+      "breakpoints": true
+    }
+  ]
 }
