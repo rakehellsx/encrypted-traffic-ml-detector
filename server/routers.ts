@@ -34,6 +34,7 @@ import {
 import { FEATURE_OPTIONS, scoreModel, trainModel, TRAFFIC_CLASSES, type FeatureName, type ModelAlgorithm, type StoredModelPayload, type TrafficClass } from "./modelEngine";
 import { storageGetSignedUrl, storagePut } from "./storage";
 import { analyzePcap } from "./trafficAnalysis";
+import { inspectPcap } from "./detectionService";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const trafficClasses = z.enum(TRAFFIC_CLASSES);
@@ -143,18 +144,12 @@ export const appRouter = router({
       const model = await getModel(ctx.user.id, input.modelId);
       if (!model) throw new Error("选择的模型不存在或无访问权限");
       const buffer = decodePcap(input.fileBase64);
-      const analysis = analyzePcap(buffer);
-      const payload = JSON.parse(model.modelJson) as StoredModelPayload;
-      const features = JSON.parse(model.featureSetJson) as FeatureName[];
-      const scored = analysis.flows.map(flow => ({ flow, ...scoreModel(flow, features, payload) }));
+      const inspected = await inspectPcap(ctx.user.id, input.name, buffer, model.id);
       const stored = await storagePut(`detections/user-${ctx.user.id}/${safeName(input.name)}`, buffer, "application/vnd.tcpdump.pcap");
-      const highRiskFlows = scored.filter(item => item.score >= 0.7).length;
-      const averageRisk = scored.reduce((sum, item) => sum + item.score, 0) / Math.max(1, scored.length);
-      const classDistribution = scored.reduce<Record<string, number>>((distribution, item) => { distribution[item.predictedClass] = (distribution[item.predictedClass] ?? 0) + 1; return distribution; }, {});
-      const summary = { packetCount: analysis.packetCount, flowCount: analysis.flowCount, protocolDistribution: analysis.protocolDistribution, classDistribution, highRiskFlows, averageRisk, modelVersion: model.versionName };
-      const taskId = await createDetectionTask({ userId: ctx.user.id, modelVersionId: model.id, fileName: input.name, storageKey: stored.key, totalFlows: scored.length, highRiskFlows, averageRisk, summary });
-      await insertDetectionFlows(taskId, scored.slice(0, 1000));
-      return { taskId, summary, topFlows: scored.sort((a, b) => b.score - a.score).slice(0, 10) };
+      const summary = { ...inspected.summary, modelVersion: model.versionName };
+      const taskId = await createDetectionTask({ userId: ctx.user.id, modelVersionId: model.id, fileName: input.name, storageKey: stored.key, totalFlows: inspected.scored.length, highRiskFlows: inspected.summary.highRiskFlows, averageRisk: inspected.summary.averageRisk, summary });
+      await insertDetectionFlows(taskId, inspected.scored.slice(0, 1000).map((entry, index) => ({ ...entry, detail: inspected.flows[index] })));
+      return { taskId, summary, topFlows: inspected.flows.slice(0, 10) };
     }),
   }),
 });

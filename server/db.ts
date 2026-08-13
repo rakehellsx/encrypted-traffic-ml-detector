@@ -273,7 +273,7 @@ export async function createDetectionTask(input: { userId: number; modelVersionI
   return Number(result[0].insertId);
 }
 
-export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: FlowFeature; score: number; predictedClass: TrafficClass; classScores: Record<string, number>; reasons: string[]; featureValues: Record<string, number> }>) {
+export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: FlowFeature; score: number; predictedClass: TrafficClass; classScores: Record<string, number>; reasons: string[]; featureValues: Record<string, number>; detail?: unknown }>) {
   const db = await requiredDb();
   for (let offset = 0; offset < flows.length; offset += 400) {
     await db.insert(detectionFlows).values(flows.slice(offset, offset + 400).map(entry => ({
@@ -288,7 +288,7 @@ export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: 
       predictedClass: entry.predictedClass,
       classScoresJson: JSON.stringify(entry.classScores),
       reasonsJson: JSON.stringify(entry.reasons),
-      featureJson: JSON.stringify(entry.featureValues),
+      featureJson: JSON.stringify({ featureValues: entry.featureValues, detail: entry.detail ?? null }),
     })));
   }
 }
@@ -303,7 +303,7 @@ export async function getDetectionTask(userId: number, taskId: number) {
   const tasks = await db.select().from(detectionTasks).where(and(eq(detectionTasks.id, taskId), eq(detectionTasks.userId, userId))).limit(1);
   if (!tasks[0]) return undefined;
   const flows = await db.select().from(detectionFlows).where(eq(detectionFlows.taskId, taskId)).orderBy(desc(detectionFlows.riskScore)).limit(1000);
-  return { task: tasks[0], flows };
+  return { task: tasks[0], flows: flows.map(flow => ({ ...flow, featureDetail: JSON.parse(flow.featureJson), classScores: JSON.parse(flow.classScoresJson), reasons: JSON.parse(flow.reasonsJson) })) };
 }
 
 export async function dashboard(userId: number) {
