@@ -25,3 +25,7 @@ NFStream 在该样本上提取到一条 UDP/443 双向流：413 个包、254,874
 Stratosphere IPS 的 MCFP CTU-Malware-Capture-Botnet-42 公开提供 `botnet-capture-20110810-neris.pcap`，并说明该 PCAP 仅含 botnet 流量。页面同时提供标签说明：`From-Botnet` 是恶意流，`To-Botnet` 不应仅因目标地址而自动标为恶意；使用数据应引用 Malware Capture Facility Project。验证流程只允许下载和处理公开 PCAP 与标签文件，禁止下载、解压或执行同目录恶意二进制 ZIP。
 
 MCFP 的详细双向流标签文件为 Argus 二进制格式，当前运行环境没有可靠的 `ra` 转换器，因此不应将其二进制片段直接喂入模型。另有 CTU-13 CSV 镜像可读出 botnet 与 normal 流特征，但镜像未声明许可证；它只能作为字段格式参考，不能替代原始数据的许可与引用要求。
+
+## 安全合成 TLS 握手回归
+
+`scripts/create_tls_handshake_pcap.py` 生成仅包含安全 ClientHello 元数据的 PCAP。它覆盖 TLS 1.3 与 TLS 1.2 记录版本、密码套件、supported groups、EC point formats、supported versions、SNI 和用于 JA3 的扩展序列；不包含恶意代码、攻击指令或真实用户内容。`scripts/inspect_synthetic_tls.ts` 验证解析器可输出每条流的五元组、TLS 版本、JA3、SNI 可见性和 SPLT。该样本只证明处理链路与字段解析，不代表真实流量分布、恶意检测准确率或 ECH 性能。
