@@ -17,7 +17,7 @@ function detailFlow(entry: ModelScore & { flow: FlowFeature }, annotationSet: An
     flowId: flow.flowKey,
     network: {
       fiveTuple: { sourceIp: flow.sourceIp, sourcePort: flow.sourcePort, destinationIp: flow.destinationIp, destinationPort: flow.destinationPort, transportProtocol: flow.transportProtocol },
-      applicationProtocol: flow.applicationProtocol,
+      applicationProtocol: flow.nfstream?.application_name ? `${flow.applicationProtocol} · ${flow.nfstream.application_name} · NFStream` : `${flow.applicationProtocol} · native-fallback`,
     },
     trafficStatistics: {
       packetCount: flow.packetCount, byteCount: flow.byteCount, durationMs: flow.durationMs,

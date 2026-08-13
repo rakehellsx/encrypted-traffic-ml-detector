@@ -50,6 +50,13 @@
       "when": 1786615566328,
       "tag": "0006_strange_iron_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1786619163595,
+      "tag": "0007_same_virginia_dare",
+      "breakpoints": true
     }
   ]
 }
