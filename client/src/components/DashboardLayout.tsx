@@ -12,11 +12,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 
 const menuItems = [
   { icon: LayoutDashboard, label: "态势总览", path: "/" },
-  { icon: UploadCloud, label: "PCAP 上传", path: "/upload" },
-  { icon: Database, label: "数据集管理", path: "/datasets" },
+  { icon: UploadCloud, label: "样本上传", path: "/upload" },
+  { icon: Database, label: "数据管理", path: "/datasets" },
   { icon: BrainCircuit, label: "模型训练", path: "/training" },
   { icon: Gauge, label: "模型版本", path: "/models" },
-  { icon: Radar, label: "检测分析", path: "/detections" },
+  { icon: Radar, label: "流量检测", path: "/detections" },
 ];
 const SIDEBAR_WIDTH_KEY = "trafficguard-sidebar-width";
 

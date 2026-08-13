@@ -1,6 +1,8 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { createHash, randomBytes } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
+  apiKeys,
   datasets,
   detectionFlows,
   detectionTasks,
@@ -12,7 +14,7 @@ import {
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
-import type { FeatureName, ModelAlgorithm } from "./modelEngine";
+import type { FeatureName, ModelAlgorithm, TrafficClass } from "./modelEngine";
 import type { FlowFeature } from "./trafficAnalysis";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -51,15 +53,19 @@ export async function getUserByOpenId(openId: string) {
   return result[0];
 }
 
-export async function createDataset(input: { userId: number; name: string; storageKey: string; fileSize: number; packetCount: number; flowCount: number; protocolDistribution: Record<string, number>; label: "benign" | "malicious" | "unlabeled" }) {
+function legacyLabel(trafficClass: TrafficClass | "unlabeled") {
+  return trafficClass === "benign" ? "benign" : trafficClass === "unlabeled" ? "unlabeled" : "malicious";
+}
+
+export async function createDataset(input: { userId: number; name: string; storageKey: string; fileSize: number; packetCount: number; flowCount: number; protocolDistribution: Record<string, number>; trafficClass: TrafficClass | "unlabeled" }) {
   const db = await requiredDb();
-  const inserted = await db.insert(datasets).values({ ...input, protocolJson: JSON.stringify(input.protocolDistribution) });
+  const inserted = await db.insert(datasets).values({ ...input, label: legacyLabel(input.trafficClass), protocolJson: JSON.stringify(input.protocolDistribution) });
   return Number(inserted[0].insertId);
 }
 
-export async function createUploadTask(input: { userId: number; fileName: string; storageKey: string; fileSize: number; label: "benign" | "malicious" | "unlabeled" }) {
+export async function createUploadTask(input: { userId: number; fileName: string; storageKey: string; fileSize: number; trafficClass: TrafficClass | "unlabeled" }) {
   const db = await requiredDb();
-  const result = await db.insert(uploadTasks).values(input);
+  const result = await db.insert(uploadTasks).values({ ...input, label: legacyLabel(input.trafficClass) });
   return Number(result[0].insertId);
 }
 
@@ -118,9 +124,9 @@ export async function getDataset(userId: number, datasetId: number) {
   return rows[0];
 }
 
-export async function updateDatasetLabel(userId: number, datasetId: number, label: "benign" | "malicious" | "unlabeled") {
+export async function updateDatasetLabel(userId: number, datasetId: number, trafficClass: TrafficClass | "unlabeled") {
   const db = await requiredDb();
-  await db.update(datasets).set({ label }).where(and(eq(datasets.id, datasetId), eq(datasets.userId, userId)));
+  await db.update(datasets).set({ trafficClass, label: legacyLabel(trafficClass) }).where(and(eq(datasets.id, datasetId), eq(datasets.userId, userId)));
 }
 
 export async function deleteDataset(userId: number, datasetId: number) {
@@ -171,15 +177,15 @@ export async function getTrainingSamples(userId: number, datasetIds: number[]) {
   const db = await requiredDb();
   const owned = await db.select().from(datasets).where(and(eq(datasets.userId, userId), inArray(datasets.id, datasetIds)));
   if (owned.length !== datasetIds.length) throw new Error("训练数据集中存在无权限或不存在的记录");
-  const labels = new Map(owned.map(dataset => [dataset.id, dataset.label]));
-  if (Array.from(labels.values()).some(label => label === "unlabeled")) throw new Error("训练集不能包含未标注数据");
+  const labels = new Map(owned.map(dataset => [dataset.id, dataset.trafficClass]));
+  if (Array.from(owned).some(dataset => dataset.trafficClass === "unlabeled")) throw new Error("训练集不能包含未标注数据");
   const rows = await db.select().from(flowFeatures).where(inArray(flowFeatures.datasetId, datasetIds));
-  return rows.map(row => ({ flow: toFlowFeature(row), label: labels.get(row.datasetId) === "malicious" ? (1 as const) : (0 as const) }));
+  return rows.map(row => ({ flow: toFlowFeature(row), label: labels.get(row.datasetId) as TrafficClass }));
 }
 
-export async function createTrainingJob(input: { userId: number; algorithm: ModelAlgorithm; datasetIds: number[]; featureSet: FeatureName[] }) {
+export async function createTrainingJob(input: { userId: number; algorithm: ModelAlgorithm; datasetIds: number[]; featureSet: FeatureName[]; classSet: TrafficClass[] }) {
   const db = await requiredDb();
-  const result = await db.insert(trainingJobs).values({ userId: input.userId, algorithm: input.algorithm, datasetIdsJson: JSON.stringify(input.datasetIds), featureSetJson: JSON.stringify(input.featureSet), progress: 10 });
+  const result = await db.insert(trainingJobs).values({ userId: input.userId, algorithm: input.algorithm, datasetIdsJson: JSON.stringify(input.datasetIds), featureSetJson: JSON.stringify(input.featureSet), classSetJson: JSON.stringify(input.classSet), progress: 10 });
   return Number(result[0].insertId);
 }
 
@@ -194,13 +200,14 @@ export async function getTrainingJob(userId: number, jobId: number) {
   return rows[0];
 }
 
-export async function createModel(input: { userId: number; versionName: string; algorithm: ModelAlgorithm; featureSet: FeatureName[]; metrics: unknown; payload: unknown; datasetIds: number[]; isActive: boolean }) {
+export async function createModel(input: { userId: number; versionName: string; algorithm: ModelAlgorithm; featureSet: FeatureName[]; classSet: TrafficClass[]; metrics: unknown; payload: unknown; datasetIds: number[]; isActive: boolean }) {
   const db = await requiredDb();
   const result = await db.insert(modelVersions).values({
     userId: input.userId,
     versionName: input.versionName,
     algorithm: input.algorithm,
     featureSetJson: JSON.stringify(input.featureSet),
+    classSetJson: JSON.stringify(input.classSet),
     metricsJson: JSON.stringify(input.metrics),
     modelJson: JSON.stringify(input.payload),
     trainedDatasetIdsJson: JSON.stringify(input.datasetIds),
@@ -220,6 +227,12 @@ export async function getModel(userId: number, modelId: number) {
   return rows[0];
 }
 
+export async function getActiveModel(userId: number) {
+  const db = await requiredDb();
+  const rows = await db.select().from(modelVersions).where(and(eq(modelVersions.userId, userId), eq(modelVersions.isActive, true))).limit(1);
+  return rows[0];
+}
+
 export async function activateModel(userId: number, modelId: number) {
   const db = await requiredDb();
   const model = await getModel(userId, modelId);
@@ -228,13 +241,39 @@ export async function activateModel(userId: number, modelId: number) {
   await db.update(modelVersions).set({ isActive: true }).where(eq(modelVersions.id, modelId));
 }
 
+export async function createApiKey(userId: number, name: string) {
+  const rawKey = `tg_${randomBytes(24).toString("base64url")}`;
+  const db = await requiredDb();
+  const result = await db.insert(apiKeys).values({ userId, name, keyPrefix: rawKey.slice(0, 12), keyHash: createHash("sha256").update(rawKey).digest("hex") });
+  return { id: Number(result[0].insertId), rawKey, keyPrefix: rawKey.slice(0, 12), name };
+}
+
+export async function listApiKeys(userId: number) {
+  const db = await requiredDb();
+  return db.select({ id: apiKeys.id, name: apiKeys.name, keyPrefix: apiKeys.keyPrefix, isActive: apiKeys.isActive, lastUsedAt: apiKeys.lastUsedAt, createdAt: apiKeys.createdAt }).from(apiKeys).where(eq(apiKeys.userId, userId)).orderBy(desc(apiKeys.createdAt));
+}
+
+export async function resolveApiKey(rawKey: string) {
+  const db = await requiredDb();
+  const hash = createHash("sha256").update(rawKey).digest("hex");
+  const rows = await db.select().from(apiKeys).where(and(eq(apiKeys.keyHash, hash), eq(apiKeys.isActive, true))).limit(1);
+  if (!rows[0]) return undefined;
+  await db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, rows[0].id));
+  return rows[0];
+}
+
+export async function revokeApiKey(userId: number, apiKeyId: number) {
+  const db = await requiredDb();
+  await db.update(apiKeys).set({ isActive: false }).where(and(eq(apiKeys.id, apiKeyId), eq(apiKeys.userId, userId)));
+}
+
 export async function createDetectionTask(input: { userId: number; modelVersionId: number; fileName: string; storageKey: string; totalFlows: number; highRiskFlows: number; averageRisk: number; summary: unknown }) {
   const db = await requiredDb();
   const result = await db.insert(detectionTasks).values({ ...input, summaryJson: JSON.stringify(input.summary) });
   return Number(result[0].insertId);
 }
 
-export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: FlowFeature; score: number; reasons: string[]; featureValues: Record<string, number> }>) {
+export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: FlowFeature; score: number; predictedClass: TrafficClass; classScores: Record<string, number>; reasons: string[]; featureValues: Record<string, number> }>) {
   const db = await requiredDb();
   for (let offset = 0; offset < flows.length; offset += 400) {
     await db.insert(detectionFlows).values(flows.slice(offset, offset + 400).map(entry => ({
@@ -246,6 +285,8 @@ export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: 
       destinationPort: entry.flow.destinationPort,
       transportProtocol: entry.flow.transportProtocol,
       riskScore: entry.score,
+      predictedClass: entry.predictedClass,
+      classScoresJson: JSON.stringify(entry.classScores),
       reasonsJson: JSON.stringify(entry.reasons),
       featureJson: JSON.stringify(entry.featureValues),
     })));

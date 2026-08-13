@@ -1,0 +1,4 @@
+export const trafficClasses = ["benign", "c2_channel", "data_exfiltration", "lateral_movement", "malware_transfer"] as const;
+export type TrafficClass = (typeof trafficClasses)[number];
+export const trafficClassLabels: Record<TrafficClass | "unlabeled", string> = { benign: "正常流量", c2_channel: "命令控制", data_exfiltration: "数据外传", lateral_movement: "横向移动", malware_transfer: "恶意传输", unlabeled: "未标注集" };
+export const trafficClassStyles: Record<TrafficClass | "unlabeled", string> = { benign: "border-emerald-400/20 bg-emerald-400/10 text-emerald-200", c2_channel: "border-rose-400/20 bg-rose-400/10 text-rose-200", data_exfiltration: "border-amber-400/20 bg-amber-400/10 text-amber-200", lateral_movement: "border-violet-400/20 bg-violet-400/10 text-violet-200", malware_transfer: "border-fuchsia-400/20 bg-fuchsia-400/10 text-fuchsia-200", unlabeled: "border-slate-400/20 bg-slate-400/10 text-slate-300" };
