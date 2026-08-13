@@ -25,6 +25,7 @@ function detailFlow(entry: ModelScore & { flow: FlowFeature }, annotationSet: An
       packetLength: { average: flow.avgPacketLength, standardDeviation: flow.stdPacketLength }, interArrivalTimeMs: { average: flow.avgIatMs, standardDeviation: flow.stdIatMs },
     },
     splt: { observedPackets: flow.splt.length, maxPackets: 24, sequence: flow.splt },
+    nfstream: flow.nfstream ? { source: "nfstream", applicationName: flow.nfstream.application_name ?? null, bidirectionalPackets: flow.nfstream.bidirectional_packets, bidirectionalBytes: flow.nfstream.bidirectional_bytes, durationMs: flow.nfstream.duration_ms, splt: { direction: flow.nfstream.splt_direction, packetSizes: flow.nfstream.splt_ps, iatMs: flow.nfstream.splt_piat_ms } } : { source: "native-fallback" },
     encryptedMetadata: {
       protocol: flow.applicationProtocol,
       tls: { version: flow.tlsVersion, ja3: flow.ja3, sni: { visibility: flow.sniVisibility, value: flow.sni } },
