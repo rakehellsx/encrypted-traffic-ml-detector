@@ -201,7 +201,7 @@ export async function listDatasetFeatures(userId: number, datasetId: number, lim
   if (!dataset) throw new Error("数据集不存在或无访问权限");
   const db = await requiredDb();
   const rows = await db.select().from(flowFeatures).where(eq(flowFeatures.datasetId, datasetId)).limit(limit);
-  return rows.map(row => ({ ...row, nfstream: row.nfstreamJson ? JSON.parse(row.nfstreamJson) : null }));
+  return rows.map(row => ({ ...row, nfstream: row.nfstreamJson ? { ...JSON.parse(row.nfstreamJson), source: "nfstream" } : null }));
 }
 
 function toFlowFeature(row: typeof flowFeatures.$inferSelect): FlowFeature {
@@ -226,7 +226,7 @@ function toFlowFeature(row: typeof flowFeatures.$inferSelect): FlowFeature {
     stdIatMs: row.stdIatMs,
     uplinkRatio: row.uplinkRatio,
     splt: JSON.parse(row.spltJson),
-    nfstream: row.nfstreamJson ? JSON.parse(row.nfstreamJson) : null,
+    nfstream: row.nfstreamJson ? { ...JSON.parse(row.nfstreamJson), source: "nfstream" } : null,
     tlsVersion: row.tlsVersion,
     ja3: row.ja3,
     sniVisibility: row.sniVisibility,
@@ -377,7 +377,7 @@ export async function getDetectionTask(userId: number, taskId: number) {
   const tasks = await db.select().from(detectionTasks).where(and(eq(detectionTasks.id, taskId), eq(detectionTasks.userId, userId))).limit(1);
   if (!tasks[0]) return undefined;
   const flows = await db.select().from(detectionFlows).where(eq(detectionFlows.taskId, taskId)).orderBy(desc(detectionFlows.riskScore)).limit(1000);
-  return { task: tasks[0], flows: flows.map(flow => ({ ...flow, featureDetail: JSON.parse(flow.featureJson), nfstream: flow.nfstreamJson ? JSON.parse(flow.nfstreamJson) : null, classScores: JSON.parse(flow.classScoresJson), reasons: JSON.parse(flow.reasonsJson) })) };
+  return { task: tasks[0], flows: flows.map(flow => ({ ...flow, featureDetail: JSON.parse(flow.featureJson), nfstream: flow.nfstreamJson ? { ...JSON.parse(flow.nfstreamJson), source: "nfstream" } : null, classScores: JSON.parse(flow.classScoresJson), reasons: JSON.parse(flow.reasonsJson) })) };
 }
 
 export async function dashboard(userId: number) {
