@@ -1,7 +1,7 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { BrainCircuit, Database, Gauge, LayoutDashboard, Radar, UploadCloud } from "lucide-react";
+import { Archive, BrainCircuit, Database, Gauge, LayoutDashboard, Radar, UploadCloud } from "lucide-react";
 import { useLocation } from "wouter";
 
 const menuItems = [
@@ -11,6 +11,7 @@ const menuItems = [
   { icon: BrainCircuit, label: "模型训练", path: "/training" },
   { icon: Gauge, label: "模型版本", path: "/models" },
   { icon: Radar, label: "流量检测", path: "/detections" },
+  { icon: Archive, label: "历史归档", path: "/history" },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

@@ -39,6 +39,17 @@ export const detectionFlows = mysqlTable("detectionFlows", {
   id: int("id").autoincrement().primaryKey(), taskId: int("taskId").notNull(), flowKey: varchar("flowKey", { length: 512 }).notNull(), sourceIp: varchar("sourceIp", { length: 64 }).notNull(), sourcePort: int("sourcePort").notNull(), destinationIp: varchar("destinationIp", { length: 64 }).notNull(), destinationPort: int("destinationPort").notNull(), transportProtocol: varchar("transportProtocol", { length: 16 }).notNull(), riskScore: double("riskScore").notNull(), predictedClass: varchar("predictedClass", { length: 32 }).default("unlabeled").notNull(), classScoresJson: text("classScoresJson").notNull(), reasonsJson: text("reasonsJson").notNull(), featureJson: text("featureJson").notNull(), createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const operationLogs = mysqlTable("operationLogs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  action: varchar("action", { length: 64 }).notNull(),
+  entityType: varchar("entityType", { length: 64 }).notNull(),
+  entityId: int("entityId"),
+  summary: varchar("summary", { length: 255 }).notNull(),
+  metadataJson: text("metadataJson").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export const apiKeys = mysqlTable("apiKeys", {
   id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), name: varchar("name", { length: 80 }).notNull(), keyPrefix: varchar("keyPrefix", { length: 16 }).notNull(), keyHash: varchar("keyHash", { length: 64 }).notNull(), isActive: boolean("isActive").default(true).notNull(), lastUsedAt: timestamp("lastUsedAt"), createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

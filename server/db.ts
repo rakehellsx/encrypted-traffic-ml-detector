@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, like, or } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
@@ -9,6 +9,7 @@ import {
   flowFeatures,
   InsertUser,
   modelVersions,
+  operationLogs,
   trainingJobs,
   uploadTasks,
   users,
@@ -72,13 +73,17 @@ function legacyLabel(trafficClass: TrafficClass | "unlabeled") {
 export async function createDataset(input: { userId: number; name: string; storageKey: string; fileSize: number; packetCount: number; flowCount: number; protocolDistribution: Record<string, number>; trafficClass: TrafficClass | "unlabeled" }) {
   const db = await requiredDb();
   const inserted = await db.insert(datasets).values({ ...input, label: legacyLabel(input.trafficClass), protocolJson: JSON.stringify(input.protocolDistribution) });
-  return Number(inserted[0].insertId);
+  const id = Number(inserted[0].insertId);
+  await logOperation({ userId: input.userId, action: "dataset.created", entityType: "dataset", entityId: id, summary: `已保存训练数据集：${input.name}`, metadata: { trafficClass: input.trafficClass, packetCount: input.packetCount, flowCount: input.flowCount } });
+  return id;
 }
 
 export async function createUploadTask(input: { userId: number; fileName: string; storageKey: string; fileSize: number; trafficClass: TrafficClass | "unlabeled" }) {
   const db = await requiredDb();
   const result = await db.insert(uploadTasks).values({ ...input, label: legacyLabel(input.trafficClass) });
-  return Number(result[0].insertId);
+  const id = Number(result[0].insertId);
+  await logOperation({ userId: input.userId, action: "upload.created", entityType: "upload_task", entityId: id, summary: `已创建 PCAP 解析任务：${input.fileName}`, metadata: { trafficClass: input.trafficClass, fileSize: input.fileSize } });
+  return id;
 }
 
 export async function getUploadTask(userId: number, taskId: number) {
@@ -139,6 +144,7 @@ export async function getDataset(userId: number, datasetId: number) {
 export async function updateDatasetLabel(userId: number, datasetId: number, trafficClass: TrafficClass | "unlabeled") {
   const db = await requiredDb();
   await db.update(datasets).set({ trafficClass, label: legacyLabel(trafficClass) }).where(and(eq(datasets.id, datasetId), eq(datasets.userId, userId)));
+  await logOperation({ userId, action: "dataset.labeled", entityType: "dataset", entityId: datasetId, summary: `已更新训练数据集类别为：${trafficClass}`, metadata: { trafficClass } });
 }
 
 export async function deleteDataset(userId: number, datasetId: number) {
@@ -147,6 +153,7 @@ export async function deleteDataset(userId: number, datasetId: number) {
   if (!dataset) throw new Error("数据集不存在或无访问权限");
   await db.delete(flowFeatures).where(eq(flowFeatures.datasetId, datasetId));
   await db.delete(datasets).where(and(eq(datasets.id, datasetId), eq(datasets.userId, userId)));
+  await logOperation({ userId, action: "dataset.deleted", entityType: "dataset", entityId: datasetId, summary: `已删除训练数据集：${dataset.name}`, metadata: { name: dataset.name } });
 }
 
 export async function listDatasetFeatures(userId: number, datasetId: number, limit = 50) {
@@ -198,7 +205,9 @@ export async function getTrainingSamples(userId: number, datasetIds: number[]) {
 export async function createTrainingJob(input: { userId: number; algorithm: ModelAlgorithm; datasetIds: number[]; featureSet: FeatureName[]; classSet: TrafficClass[] }) {
   const db = await requiredDb();
   const result = await db.insert(trainingJobs).values({ userId: input.userId, algorithm: input.algorithm, datasetIdsJson: JSON.stringify(input.datasetIds), featureSetJson: JSON.stringify(input.featureSet), classSetJson: JSON.stringify(input.classSet), progress: 10 });
-  return Number(result[0].insertId);
+  const id = Number(result[0].insertId);
+  await logOperation({ userId: input.userId, action: "training.created", entityType: "training_job", entityId: id, summary: `已创建多分类训练任务（${input.classSet.length} 类）`, metadata: { algorithm: input.algorithm, datasetIds: input.datasetIds, classSet: input.classSet, featureSet: input.featureSet } });
+  return id;
 }
 
 export async function updateTrainingJob(jobId: number, values: { status?: "running" | "completed" | "failed"; progress?: number; modelVersionId?: number; errorMessage?: string }) {
@@ -225,7 +234,9 @@ export async function createModel(input: { userId: number; versionName: string; 
     trainedDatasetIdsJson: JSON.stringify(input.datasetIds),
     isActive: input.isActive,
   });
-  return Number(result[0].insertId);
+  const id = Number(result[0].insertId);
+  await logOperation({ userId: input.userId, action: "model.created", entityType: "model_version", entityId: id, summary: `已保存模型版本：${input.versionName}`, metadata: { algorithm: input.algorithm, classSet: input.classSet, datasetIds: input.datasetIds, isActive: input.isActive } });
+  return id;
 }
 
 export async function listModels(userId: number) {
@@ -251,13 +262,16 @@ export async function activateModel(userId: number, modelId: number) {
   if (!model) throw new Error("模型不存在或无访问权限");
   await db.update(modelVersions).set({ isActive: false }).where(eq(modelVersions.userId, userId));
   await db.update(modelVersions).set({ isActive: true }).where(eq(modelVersions.id, modelId));
+  await logOperation({ userId, action: "model.activated", entityType: "model_version", entityId: modelId, summary: `已激活模型版本：${model.versionName}`, metadata: { versionName: model.versionName } });
 }
 
 export async function createApiKey(userId: number, name: string) {
   const rawKey = `tg_${randomBytes(24).toString("base64url")}`;
   const db = await requiredDb();
   const result = await db.insert(apiKeys).values({ userId, name, keyPrefix: rawKey.slice(0, 12), keyHash: createHash("sha256").update(rawKey).digest("hex") });
-  return { id: Number(result[0].insertId), rawKey, keyPrefix: rawKey.slice(0, 12), name };
+  const id = Number(result[0].insertId);
+  await logOperation({ userId, action: "api_key.created", entityType: "api_key", entityId: id, summary: `已生成接口密钥：${name}`, metadata: { name, keyPrefix: rawKey.slice(0, 12) } });
+  return { id, rawKey, keyPrefix: rawKey.slice(0, 12), name };
 }
 
 export async function listApiKeys(userId: number) {
@@ -277,12 +291,15 @@ export async function resolveApiKey(rawKey: string) {
 export async function revokeApiKey(userId: number, apiKeyId: number) {
   const db = await requiredDb();
   await db.update(apiKeys).set({ isActive: false }).where(and(eq(apiKeys.id, apiKeyId), eq(apiKeys.userId, userId)));
+  await logOperation({ userId, action: "api_key.revoked", entityType: "api_key", entityId: apiKeyId, summary: "已撤销接口密钥", metadata: {} });
 }
 
 export async function createDetectionTask(input: { userId: number; modelVersionId: number; fileName: string; storageKey: string; totalFlows: number; highRiskFlows: number; averageRisk: number; summary: unknown }) {
   const db = await requiredDb();
   const result = await db.insert(detectionTasks).values({ ...input, summaryJson: JSON.stringify(input.summary) });
-  return Number(result[0].insertId);
+  const id = Number(result[0].insertId);
+  await logOperation({ userId: input.userId, action: "detection.completed", entityType: "detection_task", entityId: id, summary: `已完成检测任务：${input.fileName}`, metadata: { modelVersionId: input.modelVersionId, totalFlows: input.totalFlows, highRiskFlows: input.highRiskFlows, averageRisk: input.averageRisk } });
+  return id;
 }
 
 export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: FlowFeature; score: number; predictedClass: TrafficClass; classScores: Record<string, number>; reasons: string[]; featureValues: Record<string, number>; detail?: unknown }>) {
@@ -321,4 +338,63 @@ export async function getDetectionTask(userId: number, taskId: number) {
 export async function dashboard(userId: number) {
   const [datasetRows, modelRows, taskRows] = await Promise.all([listDatasets(userId), listModels(userId), listDetectionTasks(userId)]);
   return { datasetCount: datasetRows.length, modelCount: modelRows.length, detectionCount: taskRows.length, recentTasks: taskRows.slice(0, 5), activeModel: modelRows.find(model => model.isActive) ?? null };
+}
+
+export async function logOperation(input: { userId: number; action: string; entityType: string; entityId?: number; summary: string; metadata: Record<string, unknown> }) {
+  const db = await requiredDb();
+  await db.insert(operationLogs).values({ ...input, entityId: input.entityId ?? null, metadataJson: JSON.stringify(input.metadata) });
+}
+
+export async function listOperationLogs(userId: number, limit = 200) {
+  const db = await requiredDb();
+  const rows = await db.select().from(operationLogs).where(eq(operationLogs.userId, userId)).orderBy(desc(operationLogs.createdAt)).limit(limit);
+  return rows.map(row => ({ ...row, metadata: JSON.parse(row.metadataJson) }));
+}
+
+type PageInput = { page: number; pageSize: number; keyword?: string };
+
+export async function listDatasetHistory(userId: number, input: PageInput) {
+  const db = await requiredDb(); const keyword = input.keyword?.trim();
+  const filter = keyword ? and(eq(datasets.userId, userId), or(like(datasets.name, `%${keyword}%`), like(datasets.trafficClass, `%${keyword}%`))) : eq(datasets.userId, userId);
+  const [totalRow] = await db.select({ total: count() }).from(datasets).where(filter);
+  const items = await db.select().from(datasets).where(filter).orderBy(desc(datasets.createdAt)).limit(input.pageSize).offset((input.page - 1) * input.pageSize);
+  return { items, total: Number(totalRow?.total ?? 0), page: input.page, pageSize: input.pageSize };
+}
+
+export async function listModelHistory(userId: number, input: PageInput) {
+  const db = await requiredDb(); const keyword = input.keyword?.trim();
+  const filter = keyword ? and(eq(modelVersions.userId, userId), or(like(modelVersions.versionName, `%${keyword}%`), like(modelVersions.algorithm, `%${keyword}%`), like(modelVersions.classSetJson, `%${keyword}%`))) : eq(modelVersions.userId, userId);
+  const [totalRow] = await db.select({ total: count() }).from(modelVersions).where(filter);
+  const items = await db.select().from(modelVersions).where(filter).orderBy(desc(modelVersions.createdAt)).limit(input.pageSize).offset((input.page - 1) * input.pageSize);
+  return { items, total: Number(totalRow?.total ?? 0), page: input.page, pageSize: input.pageSize };
+}
+
+export async function listDetectionHistory(userId: number, input: PageInput) {
+  const db = await requiredDb(); const keyword = input.keyword?.trim();
+  const filter = keyword ? and(eq(detectionTasks.userId, userId), or(like(detectionTasks.fileName, `%${keyword}%`), like(detectionTasks.status, `%${keyword}%`))) : eq(detectionTasks.userId, userId);
+  const [totalRow] = await db.select({ total: count() }).from(detectionTasks).where(filter);
+  const items = await db.select().from(detectionTasks).where(filter).orderBy(desc(detectionTasks.createdAt)).limit(input.pageSize).offset((input.page - 1) * input.pageSize);
+  return { items, total: Number(totalRow?.total ?? 0), page: input.page, pageSize: input.pageSize };
+}
+
+export async function listOperationLogHistory(userId: number, input: PageInput) {
+  const db = await requiredDb(); const keyword = input.keyword?.trim();
+  const filter = keyword ? and(eq(operationLogs.userId, userId), or(like(operationLogs.action, `%${keyword}%`), like(operationLogs.summary, `%${keyword}%`), like(operationLogs.entityType, `%${keyword}%`))) : eq(operationLogs.userId, userId);
+  const [totalRow] = await db.select({ total: count() }).from(operationLogs).where(filter);
+  const rows = await db.select().from(operationLogs).where(filter).orderBy(desc(operationLogs.createdAt)).limit(input.pageSize).offset((input.page - 1) * input.pageSize);
+  return { items: rows.map(row => ({ ...row, metadata: JSON.parse(row.metadataJson) })), total: Number(totalRow?.total ?? 0), page: input.page, pageSize: input.pageSize };
+}
+
+export async function exportDataset(userId: number, datasetId: number) {
+  const dataset = await getDataset(userId, datasetId);
+  if (!dataset) throw new Error("数据集不存在或无访问权限");
+  const db = await requiredDb();
+  const features = await db.select().from(flowFeatures).where(eq(flowFeatures.datasetId, datasetId));
+  return { dataset: { ...dataset, protocolDistribution: JSON.parse(dataset.protocolJson) }, flowFeatures: features.map(toFlowFeature) };
+}
+
+export async function exportModel(userId: number, modelId: number) {
+  const model = await getModel(userId, modelId);
+  if (!model) throw new Error("模型不存在或无访问权限");
+  return { ...model, featureSet: JSON.parse(model.featureSetJson), classSet: JSON.parse(model.classSetJson), metrics: JSON.parse(model.metricsJson), trainedDatasetIds: JSON.parse(model.trainedDatasetIdsJson), payload: JSON.parse(model.modelJson) };
 }

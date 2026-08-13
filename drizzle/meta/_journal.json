@@ -29,6 +29,13 @@
       "when": 1786603997404,
       "tag": "0003_sour_moonstone",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1786609236495,
+      "tag": "0004_deep_kronos",
+      "breakpoints": true
     }
   ]
 }

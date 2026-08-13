@@ -1,7 +1,8 @@
 import type { Express, Request, Response } from "express";
 import multer from "multer";
 import { inspectPcap } from "./detectionService";
-import { resolveApiKey } from "./db";
+import { createDetectionTask, getModel, insertDetectionFlows, resolveApiKey } from "./db";
+import { storagePut } from "./storage";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
 
@@ -20,8 +21,15 @@ export function registerDetectionHttp(app: Express) {
       if (!request.file) return respondError(response, 400, "PCAP_REQUIRED", "请使用 multipart/form-data 的 pcap 字段上传 PCAP 文件");
       const modelId = request.body.modelId ? Number(request.body.modelId) : undefined;
       if (request.body.modelId && (!Number.isInteger(modelId) || !modelId || modelId < 1)) return respondError(response, 400, "MODEL_ID_INVALID", "modelId 必须为正整数");
-      const result = await inspectPcap(credential.userId, request.file.originalname || "upload.pcap", request.file.buffer, modelId);
-      return response.status(200).json({ requestId: crypto.randomUUID(), ...result, flows: result.flows.slice(0, 1000) });
+      const fileName = request.file.originalname || "upload.pcap";
+      const result = await inspectPcap(credential.userId, fileName, request.file.buffer, modelId);
+      const model = await getModel(credential.userId, result.model.id);
+      if (!model) return respondError(response, 422, "MODEL_UNAVAILABLE", "选择的模型不可用");
+      const stored = await storagePut(`api-detections/public/${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`, request.file.buffer, "application/vnd.tcpdump.pcap");
+      const summary = { ...result.summary, modelVersion: model.versionName, source: "http_api" };
+      const taskId = await createDetectionTask({ userId: credential.userId, modelVersionId: model.id, fileName, storageKey: stored.key, totalFlows: result.scored.length, highRiskFlows: result.summary.highRiskFlows, averageRisk: result.summary.averageRisk, summary });
+      await insertDetectionFlows(taskId, result.scored.slice(0, 1000).map((entry, index) => ({ ...entry, detail: result.flows[index] })));
+      return response.status(200).json({ requestId: crypto.randomUUID(), taskId, summary, model: result.model, flows: result.flows.slice(0, 1000) });
     } catch (error) {
       const message = error instanceof Error ? error.message : "检测服务发生未知错误";
       const status = message.includes("模型") ? 422 : 500;

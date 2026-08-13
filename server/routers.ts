@@ -3,7 +3,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
-import { activateModel, createApiKey, createDataset, createUploadTask, createDetectionTask, createModel, createTrainingJob, dashboard, deleteDataset, getDataset, getDetectionTask, getModel, getPublicWorkspaceUser, getTrainingJob, getUploadTask, getTrainingSamples, insertDetectionFlows, insertFlowFeatures, listDatasetFeatures, listDatasets, listDetectionTasks, listApiKeys, listModels, updateDatasetLabel, updateTrainingJob, updateUploadTask, revokeApiKey } from "./db";
+import { activateModel, createApiKey, createDataset, createUploadTask, createDetectionTask, createModel, createTrainingJob, dashboard, deleteDataset, exportDataset, exportModel, getDataset, getDetectionTask, getModel, getPublicWorkspaceUser, getTrainingJob, getUploadTask, getTrainingSamples, insertDetectionFlows, insertFlowFeatures, listDatasetFeatures, listDatasetHistory, listDatasets, listDetectionHistory, listDetectionTasks, listApiKeys, listModelHistory, listModels, listOperationLogHistory, listOperationLogs, updateDatasetLabel, updateTrainingJob, updateUploadTask, revokeApiKey } from "./db";
 import { FEATURE_OPTIONS, TRAFFIC_CLASSES, trainModel, type FeatureName, type ModelAlgorithm, type TrafficClass } from "./modelEngine";
 import { storageGetSignedUrl, storagePut } from "./storage";
 import { analyzePcap } from "./trafficAnalysis";
@@ -11,6 +11,7 @@ import { inspectPcap } from "./detectionService";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const trafficClasses = z.enum(TRAFFIC_CLASSES); const datasetClasses = z.union([trafficClasses, z.literal("unlabeled")]); const algorithms = z.enum(["logistic_regression", "gaussian_nb"]); const featureNames = z.enum(FEATURE_OPTIONS);
+const historyPageInput = z.object({ page: z.number().int().positive().default(1), pageSize: z.number().int().min(5).max(100).default(10), keyword: z.string().max(120).optional() });
 function decodePcap(base64: string) { const encoded = base64.includes(",") ? base64.split(",").at(-1)! : base64; const buffer = Buffer.from(encoded, "base64"); if (!buffer.length) throw new Error("上传内容为空"); if (buffer.length > MAX_UPLOAD_BYTES) throw new Error("单个 PCAP 文件不能超过 20 MB"); return buffer; }
 function safeName(name: string) { return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160) || "capture.pcap"; }
 const workspaceProcedure = publicProcedure.use(async ({ ctx, next }) => next({ ctx: { ...ctx, workspaceUser: await getPublicWorkspaceUser() } }));
@@ -37,5 +38,15 @@ export const appRouter = router({
   }),
   apiKeys: router({ list: workspaceProcedure.query(({ ctx }) => listApiKeys(ctx.workspaceUser.id)), create: workspaceProcedure.input(z.object({ name: z.string().min(2).max(80) })).mutation(({ ctx, input }) => createApiKey(ctx.workspaceUser.id, input.name)), revoke: workspaceProcedure.input(z.object({ apiKeyId: z.number().int().positive() })).mutation(async ({ ctx, input }) => { await revokeApiKey(ctx.workspaceUser.id, input.apiKeyId); return { success: true }; }) }),
   detections: router({ list: workspaceProcedure.query(({ ctx }) => listDetectionTasks(ctx.workspaceUser.id)), detail: workspaceProcedure.input(z.object({ taskId: z.number().int().positive() })).query(({ ctx, input }) => getDetectionTask(ctx.workspaceUser.id, input.taskId)), analyze: workspaceProcedure.input(z.object({ name: z.string().min(1).max(255), fileBase64: z.string().min(20), modelId: z.number().int().positive() })).mutation(async ({ ctx, input }) => { const model = await getModel(ctx.workspaceUser.id, input.modelId); if (!model) throw new Error("选择的模型不存在"); const buffer = decodePcap(input.fileBase64); const inspected = await inspectPcap(ctx.workspaceUser.id, input.name, buffer, model.id); const stored = await storagePut(`detections/public/${safeName(input.name)}`, buffer, "application/vnd.tcpdump.pcap"); const summary = { ...inspected.summary, modelVersion: model.versionName }; const taskId = await createDetectionTask({ userId: ctx.workspaceUser.id, modelVersionId: model.id, fileName: input.name, storageKey: stored.key, totalFlows: inspected.scored.length, highRiskFlows: inspected.summary.highRiskFlows, averageRisk: inspected.summary.averageRisk, summary }); await insertDetectionFlows(taskId, inspected.scored.slice(0, 1000).map((entry, index) => ({ ...entry, detail: inspected.flows[index] }))); return { taskId, summary, topFlows: inspected.flows.slice(0, 10) }; }) }),
+  history: router({
+    logs: workspaceProcedure.input(z.object({ limit: z.number().int().min(1).max(500).default(200) })).query(({ ctx, input }) => listOperationLogs(ctx.workspaceUser.id, input.limit)),
+    datasets: workspaceProcedure.input(historyPageInput).query(({ ctx, input }) => listDatasetHistory(ctx.workspaceUser.id, input)),
+    models: workspaceProcedure.input(historyPageInput).query(({ ctx, input }) => listModelHistory(ctx.workspaceUser.id, input)),
+    detections: workspaceProcedure.input(historyPageInput).query(({ ctx, input }) => listDetectionHistory(ctx.workspaceUser.id, input)),
+    operationLogs: workspaceProcedure.input(historyPageInput).query(({ ctx, input }) => listOperationLogHistory(ctx.workspaceUser.id, input)),
+    datasetExport: workspaceProcedure.input(z.object({ datasetId: z.number().int().positive() })).query(({ ctx, input }) => exportDataset(ctx.workspaceUser.id, input.datasetId)),
+    modelExport: workspaceProcedure.input(z.object({ modelId: z.number().int().positive() })).query(({ ctx, input }) => exportModel(ctx.workspaceUser.id, input.modelId)),
+    detectionExport: workspaceProcedure.input(z.object({ taskId: z.number().int().positive() })).query(({ ctx, input }) => getDetectionTask(ctx.workspaceUser.id, input.taskId)),
+  }),
 });
 export type AppRouter = typeof appRouter;
