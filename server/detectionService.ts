@@ -1,5 +1,5 @@
 import { getActiveModel, getModel } from "./db";
-import { scoreModel, type FeatureName, type StoredModelPayload } from "./modelEngine";
+import { scoreModelBatch, type FeatureName, type ModelScore, type StoredModelPayload } from "./modelEngine";
 import { analyzePcap, type FlowFeature } from "./trafficAnalysis";
 import { labelName, type AnnotationSetSnapshot } from "@shared/annotationSets";
 
@@ -10,7 +10,7 @@ function riskLevel(score: number) {
   return "low";
 }
 
-function detailFlow(entry: ReturnType<typeof scoreModel> & { flow: FlowFeature }, annotationSet: AnnotationSetSnapshot) {
+function detailFlow(entry: ModelScore & { flow: FlowFeature }, annotationSet: AnnotationSetSnapshot) {
   const { flow, score, predictedClass, classScores, reasons, featureValues } = entry;
   return {
     flowId: flow.flowKey,
@@ -39,7 +39,7 @@ export async function inspectPcap(userId: number, fileName: string, buffer: Buff
   if (!model) throw new Error(requestedModelId ? "指定模型不存在或无访问权限" : "当前用户没有已激活的检测模型");
   const analysis = analyzePcap(buffer); const payload = JSON.parse(model.modelJson) as StoredModelPayload; const features = JSON.parse(model.featureSetJson) as FeatureName[];
   const annotationSet = model.annotationSnapshotJson ? JSON.parse(model.annotationSnapshotJson) as AnnotationSetSnapshot : { name: "历史标注集", labels: [] };
-  const scored = analysis.flows.map(flow => ({ flow, ...scoreModel(flow, features, payload) })).sort((left, right) => right.score - left.score);
+  const scores = await scoreModelBatch(analysis.flows, features, payload); const scored = analysis.flows.map((flow, index) => ({ flow, ...scores[index] })).sort((left, right) => right.score - left.score);
   const flows = scored.map(entry => detailFlow(entry, annotationSet)); const classDistribution = flows.reduce<Record<string, number>>((distribution, entry) => { distribution[entry.classification.predictedClass] = (distribution[entry.classification.predictedClass] ?? 0) + 1; return distribution; }, {});
   const riskDistribution = flows.reduce<Record<string, number>>((distribution, entry) => { distribution[entry.risk.level] = (distribution[entry.risk.level] ?? 0) + 1; return distribution; }, { critical: 0, high: 0, medium: 0, low: 0 });
   const encryptionMetadata = { tlsFlows: flows.filter(entry => entry.encryptedMetadata.protocol === "TLS").length, quicFlows: flows.filter(entry => entry.encryptedMetadata.protocol === "QUIC").length, sniVisible: flows.filter(entry => entry.encryptedMetadata.tls.sni.visibility === "visible").length, sniNotObserved: flows.filter(entry => entry.encryptedMetadata.tls.sni.visibility === "not_observed").length, ja3Observed: flows.filter(entry => Boolean(entry.encryptedMetadata.tls.ja3)).length };

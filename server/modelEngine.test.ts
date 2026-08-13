@@ -9,14 +9,14 @@ function makeFlow(index: number, trafficClass: TrafficClass): FlowFeature {
 }
 
 describe("model engine", () => {
-  it("trains and predicts separable multi-class encrypted traffic", () => {
+  it("trains and predicts separable multi-class encrypted traffic", async () => {
     const classes: TrafficClass[] = ["benign", "c2_channel", "data_exfiltration"];
     const samples = classes.flatMap((trafficClass, classIndex) => Array.from({ length: 10 }, (_, index) => ({ flow: makeFlow(classIndex * 20 + index + 1, trafficClass), label: trafficClass })));
     const features = ["byteCount", "packetCount", "uplinkRatio", "durationMs"] as const;
-    const trained = trainModel(samples, [...features], "logistic_regression");
-    const prediction = scoreModel(makeFlow(99, "c2_channel"), [...features], trained.payload);
+    const trained = await trainModel(samples, [...features], "lightgbm_kitnet");
+    const prediction = await scoreModel(makeFlow(99, "c2_channel"), [...features], trained.payload);
     expect(prediction.predictedClass).toBe("c2_channel");
     expect(prediction.classScores.c2_channel).toBeGreaterThan(prediction.classScores.benign);
     expect(trained.metrics.macroF1).toBeGreaterThan(0.7);
-  });
+  }, 20_000);
 });

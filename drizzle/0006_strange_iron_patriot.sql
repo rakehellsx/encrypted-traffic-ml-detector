@@ -1,0 +1,2 @@
+ALTER TABLE `modelVersions` MODIFY COLUMN `algorithm` enum('logistic_regression','gaussian_nb','lightgbm_kitnet') NOT NULL;--> statement-breakpoint
+ALTER TABLE `trainingJobs` MODIFY COLUMN `algorithm` enum('logistic_regression','gaussian_nb','lightgbm_kitnet') NOT NULL;
