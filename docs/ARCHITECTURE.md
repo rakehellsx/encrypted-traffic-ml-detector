@@ -1,44 +1,65 @@
 # 技术架构
 
-## 1. 架构概览
+## 架构概览
 
-平台采用 React + Express 的全栈结构。浏览器通过 tRPC 操作公共工作区中的数据集、模型、检测任务和历史记录；独立客户端通过带 API Key 的 HTTP 接口提交 PCAP。服务端完成报文解析、流特征工程、多分类评分、持久化和审计记录。
+平台采用 React + Express/tRPC 全栈结构。浏览器通过公共工作区管理样本、标注、训练、模型、检测和历史归档；外部客户端通过 `POST /api/v1/detect` 提交 PCAP。模型核心严格基于 [Abonnen/Malicious_TLS_Detection](https://github.com/Abonnen/Malicious_TLS_Detection)：Zeek 生成连接、TLS、X.509 和 DNS 日志，连接元组聚合器构造上游定义的特征，随机森林或 GBDT 输出类别概率。[1]
 
 ```mermaid
 flowchart LR
-  UI[React 控制台] --> RPC[tRPC 服务层]
-  Client[外部客户端] --> API[POST /api/v1/detect]
-  API --> Key[API Key 校验]
-  RPC --> Pipeline[PCAP 分析管道]
-  API --> Pipeline
-  Pipeline --> Parser[PCAP / 流解析]
-  Parser --> Features[流特征、SPLT、TLS/QUIC 元数据]
-  Features --> Engine[多分类模型引擎]
-  Engine --> Result[风险评分与解释]
-  Pipeline --> Store[(数据库)]
-  Store --> History[历史归档与审计]
-  Storage[(对象存储)] --> Pipeline
-  Pipeline --> Storage
+  UI[React 公共工作区] --> RPC[tRPC 服务]
+  Client[外部检测客户端] --> API[POST /api/v1/detect]
+  API --> Key[Bearer API Key SHA-256 校验]
+  RPC --> Pipe[PCAP 分析管道]
+  API --> Pipe
+  PCAP[PCAP] --> Native[原生解析: 五元组 TLS QUIC JA3 SPLT]
+  PCAP --> Zeek[Zeek 完整日志]
+  PCAP --> NF[NFStream 并联分析]
+  Zeek --> Tuple[Abonnen 连接元组聚合]
+  Tuple --> Features[固定 30 项 TLS 证书 DNS 特征]
+  Features --> Engine[Abonnen RF / GBDT]
+  Engine --> Result[五类概率 风险解释]
+  Native --> Flows[(MariaDB flowFeatures)]
+  NF --> Flows
+  Features --> Flows
+  Engine --> Models[(MariaDB modelVersions)]
+  Result --> Detection[(MariaDB detectionTasks/detectionFlows)]
+  PCAP --> Object[(MinIO 原始 PCAP)]
+  Detection --> History[检测页 历史归档 HTTP JSON]
 ```
 
-## 2. 核心处理链路
-
-离线 PCAP 上传后被保存至对象存储。分析服务按照五元组和方向构建双向流，生成包数、字节数、持续时间、平均包长、包间隔、上下行比和 SPLT 序列；并在网络可见范围内提取 TLS 版本、JA3、SNI 可见性和 QUIC 长包头版本。模型引擎对选定特征进行标准化和多分类评分，最终形成类别概率、风险级别与特征偏离解释。
+## 核心处理链路
 
 | 阶段 | 输入 | 输出 | 持久化实体 |
 | --- | --- | --- | --- |
-| 样本接入 | PCAP 与类别标签 | 上传/解析状态、协议统计 | `datasets`、`uploadTasks` |
-| 特征提取 | 报文与流会话 | 双向流特征、SPLT、TLS/QUIC 元数据 | `flowFeatures` |
-| 模型训练 | 已标注流特征 | 模型参数、类别集合、评估指标 | `modelVersions`、`trainingJobs` |
-| 离线检测 | 待测 PCAP 与模型 | 任务摘要、逐流风险、类别概率与解释 | `detectionTasks`、`detectionFlows` |
-| 审计归档 | 关键业务操作 | 操作摘要、实体关联与元数据 | `operationLogs` |
+| 样本上传 | PCAP、标注类别、标注集 | 上传状态、包数、协议分布 | `uploadTasks`、`datasets`、MinIO |
+| 特征提取 | PCAP | 上游 30 项特征、五元组、TLS/QUIC、JA3、SPLT、NFStream | `flowFeatures` |
+| 模型训练 | 已标注的上游特征行 | 分类器工件、类别集、Accuracy/Precision/Recall/F1 | `trainingJobs`、`modelVersions` |
+| 流量检测 | 待测 PCAP、已激活或指定模型 | 五类概率、风险分、特征解释、逐流详情 | `detectionTasks`、`detectionFlows` |
+| 审计归档 | 上传、标注、训练、激活、API Key、检测操作 | 操作摘要与关联元数据 | `operationLogs` |
 
-## 3. 模型与解释
+## 上游模型契约
 
-系统支持 Logistic Regression 与 Gaussian Naive Bayes。训练结果保存模型类型、特征集、类别集合、标准化参数、权重/分布参数、训练数据集编号及 Accuracy、Precision、Recall、F1 等指标。检测结果保存每条流的预测类别、各类别概率、风险分值、解释原因和原始可见元数据，因此历史结果无需重新解析原始 PCAP 即可查看。
+| 层次 | 设计 | 不可变约束 |
+| --- | --- | --- |
+| 日志来源 | Zeek `conn.log`、`ssl.log`/`tls.log`、`x509.log`、`dns.log` | 生产检测特征以 Zeek 日志为主来源。 |
+| 聚合单元 | `(orig_h, resp_h, resp_p, proto)` 连接元组 | 与上游 `ConnectionTuple` 的连接、TLS、证书和 DNS 聚合语义一致。 |
+| 特征集 | 上游 `Dataset.py` 筛选的 30 个字段 | 训练、存储和推理使用同一顺序，不能删减或重排。 |
+| 算法 | `abonnen_random_forest`、`abonnen_gbdt` | 保持上游随机森林和 GBDT 的关键参数；默认随机森林。 |
+| 标签 | 正常、命令控制、数据外传、横向移动、恶意传输 | `predict_proba` 映射到固定五类；未见类别概率填 0。 |
+| 风险评分 | `1 - P(benign)` | 不再与 KitNET 或其他异常检测器融合。 |
 
-## 4. 数据与安全边界
+上游原始代码面向二分类。平台五分类仅扩展标签编码、分层验证、指标计算和概率列映射；不替换其 Zeek 特征语义、筛选特征或随机森林/GBDT 算法。[1]
 
-文件实体保存于对象存储，结构化索引与分析结果保存于 MySQL/TiDB 兼容数据库。控制台使用公共工作区模式，适合内部受控环境；独立检测 API 采用 `x-api-key` 认证，数据库仅持久化密钥摘要。生产部署中应由上层网关实施网络访问控制、请求体上限、速率限制、审计保留期限和备份策略。
+## 数据与安全边界
 
-> ECH、TLS 1.3 与 QUIC 会限制被动网络侧可见字段。平台仅对可见的协议元数据建模；未观测到的 SNI、JA3 或版本字段会明确记录为 `UNKNOWN` 或 `not_observed`，不会伪造明文信息。
+原始 PCAP 保存于 MinIO；结构化索引、特征、模型、检测结果和审计日志保存于 MariaDB。`flowFeatures` 并存 `nfstreamJson` 与 `abonnenJson`，前者用于并联展示和溯源，后者是监督模型唯一输入。对象下载通过应用代理重定向到短期预签名 URL，避免向浏览器暴露 MinIO 凭据。
+
+公共工作区固定使用 `trafficguard_public_workspace`，适合受控内部环境。独立 API 使用 `Authorization: Bearer <API_KEY>`；数据库仅保存 API Key 的 SHA-256 哈希。上传大小受限，部署时应通过防火墙或反向代理进一步实施来源控制、速率限制、TLS 终结、备份和审计保留策略。
+
+> TLS 1.3、ECH 与 QUIC 会限制被动网络可见字段。平台只对可见的协议、握手、证书和流量元数据建模；未观测字段会显式记录为缺失或 `UNKNOWN`，不会伪造明文内容。
+
+旧版 `lightgbm_kitnet`、逻辑回归和高斯朴素贝叶斯模型可在历史归档中查询，但不允许用于新检测推理。新版本只允许创建 `abonnen_random_forest` 或 `abonnen_gbdt`。
+
+## 参考
+
+[1] [Abonnen, *Malicious_TLS_Detection*](https://github.com/Abonnen/Malicious_TLS_Detection)。

@@ -1,0 +1,17 @@
+{
+  "operation": "train",
+  "algorithm": "abonnen_random_forest",
+  "samples": [
+    {"label":"benign","values":{"avg_duration":0.1,"avg_size":300,"avg_pkts":3,"ssl_version":"TLSv12","cipher_suite_server":"TLS_AES_128_GCM_SHA256","cert_key_type":"rsa","cert_sig_alg":"sha256"}},
+    {"label":"benign","values":{"avg_duration":0.15,"avg_size":320,"avg_pkts":4,"ssl_version":"TLSv12","cipher_suite_server":"TLS_AES_128_GCM_SHA256","cert_key_type":"rsa","cert_sig_alg":"sha256"}},
+    {"label":"benign","values":{"avg_duration":0.12,"avg_size":290,"avg_pkts":3,"ssl_version":"TLSv13","cipher_suite_server":"TLS_AES_128_GCM_SHA256","cert_key_type":"rsa","cert_sig_alg":"sha256"}},
+    {"label":"c2_channel","values":{"avg_duration":9.0,"avg_size":80,"avg_pkts":2,"avg_time_diff":4.0,"ssl_version":"TLSv12","cipher_suite_server":"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256","cert_key_type":"rsa","cert_sig_alg":"sha1"}},
+    {"label":"c2_channel","values":{"avg_duration":8.0,"avg_size":70,"avg_pkts":2,"avg_time_diff":3.8,"ssl_version":"TLSv12","cipher_suite_server":"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256","cert_key_type":"rsa","cert_sig_alg":"sha1"}},
+    {"label":"data_exfiltration","values":{"avg_duration":4.0,"avg_size":20000,"avg_pkts":40,"recv_sent_size_ratio":0.05,"ssl_version":"TLSv13","cipher_suite_server":"TLS_CHACHA20_POLY1305_SHA256","cert_key_type":"ec","cert_sig_alg":"sha384"}},
+    {"label":"data_exfiltration","values":{"avg_duration":5.0,"avg_size":25000,"avg_pkts":45,"recv_sent_size_ratio":0.04,"ssl_version":"TLSv13","cipher_suite_server":"TLS_CHACHA20_POLY1305_SHA256","cert_key_type":"ec","cert_sig_alg":"sha384"}},
+    {"label":"lateral_movement","values":{"avg_duration":0.3,"avg_size":9000,"avg_pkts":100,"number_of_flows":8,"ssl_version":"TLSv10","cipher_suite_server":"TLS_RSA_WITH_3DES_EDE_CBC_SHA","cert_key_type":"rsa","cert_sig_alg":"sha1"}},
+    {"label":"lateral_movement","values":{"avg_duration":0.4,"avg_size":10000,"avg_pkts":110,"number_of_flows":9,"ssl_version":"TLSv10","cipher_suite_server":"TLS_RSA_WITH_3DES_EDE_CBC_SHA","cert_key_type":"rsa","cert_sig_alg":"sha1"}},
+    {"label":"malware_transfer","values":{"avg_duration":1.2,"avg_size":70000,"avg_pkts":220,"number_of_domains_in_cert":0,"SNI_ssl_ratio":0,"ssl_version":"TLSv12","cipher_suite_server":"TLS_RSA_WITH_AES_256_CBC_SHA","cert_key_type":"rsa","cert_sig_alg":"md5"}},
+    {"label":"malware_transfer","values":{"avg_duration":1.4,"avg_size":75000,"avg_pkts":240,"number_of_domains_in_cert":0,"SNI_ssl_ratio":0,"ssl_version":"TLSv12","cipher_suite_server":"TLS_RSA_WITH_AES_256_CBC_SHA","cert_key_type":"rsa","cert_sig_alg":"md5"}}
+  ]
+}

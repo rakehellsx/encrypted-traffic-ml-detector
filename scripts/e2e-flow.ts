@@ -1,31 +1,92 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { appRouter } from "../server/routers";
 import { getDb, getPublicWorkspaceUser } from "../server/db";
-import { annotationSets, apiKeys, datasets, detectionFlows, detectionTasks, flowFeatures, modelVersions, operationLogs, trainingJobs, uploadTasks, users } from "../drizzle/schema";
-import type { TrafficClass } from "../server/modelEngine";
+import { annotationSets, apiKeys, datasets, detectionFlows, detectionTasks, flowFeatures, modelVersions, operationLogs, trainingJobs, uploadTasks } from "../drizzle/schema";
+import { FEATURE_OPTIONS, type TrafficClass } from "../server/modelEngine";
 
 function tcpFrame(index: number, payloadLength: number) {
-  const frame = Buffer.alloc(14 + 20 + 20 + payloadLength); frame.writeUInt16BE(0x0800, 12); frame[14] = 0x45; frame.writeUInt16BE(20 + 20 + payloadLength, 16); frame[23] = 6;
-  [10, 20, 0, index + 1].forEach((value, offset) => { frame[26 + offset] = value; }); [198, 51, 100, 25].forEach((value, offset) => { frame[30 + offset] = value; }); frame.writeUInt16BE(43000 + index, 34); frame.writeUInt16BE(443, 36); frame[46] = 0x50;
-  for (let offset = 0; offset < payloadLength; offset += 1) frame[54 + offset] = (index * 13 + offset) % 255; return frame;
+  const frame = Buffer.alloc(14 + 20 + 20 + payloadLength);
+  frame.writeUInt16BE(0x0800, 12); frame[14] = 0x45; frame.writeUInt16BE(20 + 20 + payloadLength, 16); frame[23] = 6;
+  [10, 20, 0, index + 1].forEach((value, offset) => { frame[26 + offset] = value; });
+  [198, 51, 100, 25].forEach((value, offset) => { frame[30 + offset] = value; });
+  frame.writeUInt16BE(43000 + index, 34); frame.writeUInt16BE(443, 36); frame[46] = 0x50;
+  for (let offset = 0; offset < payloadLength; offset += 1) frame[54 + offset] = (index * 13 + offset) % 255;
+  return frame;
 }
-function pcap(payloadLength: number) { const header = Buffer.alloc(24); header.writeUInt32LE(0xa1b2c3d4, 0); header.writeUInt16LE(2, 4); header.writeUInt16LE(4, 6); header.writeUInt32LE(65535, 16); header.writeUInt32LE(1, 20); const records: Buffer[] = []; for (let index = 0; index < 5; index += 1) { const frame = tcpFrame(index, payloadLength + index * 4); const packetHeader = Buffer.alloc(16); packetHeader.writeUInt32LE(1710000100 + index, 0); packetHeader.writeUInt32LE(index * 200000, 4); packetHeader.writeUInt32LE(frame.length, 8); packetHeader.writeUInt32LE(frame.length, 12); records.push(packetHeader, frame); } return Buffer.concat([header, ...records]); }
+function pcap(payloadLength: number) {
+  const header = Buffer.alloc(24); header.writeUInt32LE(0xa1b2c3d4, 0); header.writeUInt16LE(2, 4); header.writeUInt16LE(4, 6); header.writeUInt32LE(65535, 16); header.writeUInt32LE(1, 20);
+  const records: Buffer[] = [];
+  for (let index = 0; index < 5; index += 1) {
+    const frame = tcpFrame(index, payloadLength + index * 4); const packetHeader = Buffer.alloc(16);
+    packetHeader.writeUInt32LE(1710000100 + index, 0); packetHeader.writeUInt32LE(index * 200000, 4); packetHeader.writeUInt32LE(frame.length, 8); packetHeader.writeUInt32LE(frame.length, 12); records.push(packetHeader, frame);
+  }
+  return Buffer.concat([header, ...records]);
+}
 function asDataUrl(buffer: Buffer) { return `data:application/vnd.tcpdump.pcap;base64,${buffer.toString("base64")}`; }
 
 async function main() {
-  const db = await getDb(); if (!db) throw new Error("E2E 验证需要数据库连接"); const user = await getPublicWorkspaceUser(); const caller = appRouter.createCaller({ user, req: {} as any, res: {} as any }); const suffix = Date.now(); const keepData = process.env.KEEP_E2E_DATA === "1"; const createdDatasetIds: number[] = []; const uploadJobIds: number[] = []; let annotationSetId: number | null = null; let trainingJobId: number | null = null; let modelId: number | null = null; let taskId: number | null = null; let httpTaskId: number | null = null; let apiKeyId: number | null = null; const auditLogBaseline = new Set((await caller.history.logs({ limit: 500 })).map(log => log.id)); const previousActive = (await caller.models.list()).find(model => model.isActive);
+  const db = await getDb();
+  if (!db) throw new Error("E2E 验证需要数据库连接");
+  const user = await getPublicWorkspaceUser();
+  const caller = appRouter.createCaller({ user, req: {} as any, res: {} as any });
+  const suffix = Date.now(); const keepData = process.env.KEEP_E2E_DATA === "1";
+  const createdDatasetIds: number[] = []; const uploadJobIds: number[] = [];
+  let annotationSetId: number | null = null; let trainingJobId: number | null = null; let modelId: number | null = null; let taskId: number | null = null; let httpTaskId: number | null = null; let apiKeyId: number | null = null;
+  const auditLogBaseline = new Set((await caller.history.logs({ limit: 500 })).map(log => log.id));
+  const previousActive = (await caller.models.list()).find(model => model.isActive);
   try {
-    annotationSetId = (await caller.annotationSets.create({ name: `E2E 标注集 ${suffix}`, description: "端到端验证用标签集", labels: [{ key: "benign", name: "基线流量", enabled: true, isNormal: true }, { key: "c2_channel", name: "控制通道", enabled: true, isNormal: false }, { key: "data_exfiltration", name: "外传行为", enabled: true, isNormal: false }], isDefault: false })).id;
-    const configured = (await caller.annotationSets.list()).find(set => set.id === annotationSetId); if (!configured || configured.labels[0].name !== "基线流量") throw new Error("标注集创建或查询失败");
-    await caller.annotationSets.update({ id: annotationSetId, isActive: false }); let inactiveRejected = false; try { await caller.datasets.createUploadJob({ name: `e2e-inactive-${suffix}.pcap`, fileBase64: asDataUrl(pcap(30)), trafficClass: "benign", annotationSetId }); } catch { inactiveRejected = true; } if (!inactiveRejected) throw new Error("停用标注集仍可创建上传任务"); await caller.annotationSets.update({ id: annotationSetId, isActive: true });
-    const uploadAndProcess = async (trafficClass: TrafficClass, payloadLength: number) => { const jobId = await caller.datasets.createUploadJob({ name: `e2e-${trafficClass}-${suffix}.pcap`, fileBase64: asDataUrl(pcap(payloadLength)), trafficClass, annotationSetId }); uploadJobIds.push(jobId); const queued = await caller.datasets.uploadJob({ jobId }); if (queued?.status !== "queued" || queued.annotationSetId !== annotationSetId) throw new Error(`上传任务未正确引用标注集：${queued?.status}`); const processed = await caller.datasets.processUploadJob({ jobId }); createdDatasetIds.push(processed.datasetId); const completed = await caller.datasets.uploadJob({ jobId }); if (completed?.status !== "completed" || completed.progress !== 100) throw new Error("PCAP 解析任务没有完成"); return processed.datasetId; };
-    const classSet: TrafficClass[] = ["benign", "c2_channel", "data_exfiltration"]; const datasetIds = [await uploadAndProcess("benign", 30), await uploadAndProcess("c2_channel", 250), await uploadAndProcess("data_exfiltration", 1200)]; const features = ["packetCount", "byteCount", "avgPacketLength", "uplinkRatio"] as const; const datasetExport = await caller.history.datasetExport({ datasetId: datasetIds[0] }); const pagedDatasets = await caller.history.datasets({ page: 1, pageSize: 5 }); if (!datasetExport.flowFeatures.length || !Object.hasOwn(datasetExport.flowFeatures[0], "nfstream") || datasetExport.dataset.trafficClass !== "benign" || pagedDatasets.items.length > 5 || pagedDatasets.total < 3) throw new Error("训练数据历史导出、NFStream 字段或分页验证失败");
-    trainingJobId = await caller.models.createTrainingJob({ datasetIds, annotationSetId, features: [...features], algorithm: "lightgbm_kitnet" }); const trained = await caller.models.train({ jobId: trainingJobId, datasetIds, annotationSetId, features: [...features], algorithm: "lightgbm_kitnet" }); modelId = trained.modelId; await caller.models.activate({ modelId }); const modelExport = await caller.history.modelExport({ modelId }); const pagedModels = await caller.history.models({ page: 1, pageSize: 5 }); if (!Array.isArray(modelExport.classSet) || modelExport.classSet.length !== 3 || !modelExport.annotationSnapshotJson || !pagedModels.items.some(item => item.id === modelId)) throw new Error("模型历史导出、标注快照或分页验证失败");
-    const analyzed = await caller.detections.analyze({ name: `e2e-detection-${suffix}.pcap`, fileBase64: asDataUrl(pcap(1400)), modelId }); taskId = analyzed.taskId; const detail = await caller.detections.detail({ taskId }); const persistedFlow = detail?.flows[0]; const persistedDetail = persistedFlow?.featureDetail?.detail; if (!detail || detail.task.annotationSetId !== annotationSetId || !detail.task.annotationSnapshotJson || detail.task.totalFlows < 5 || !persistedFlow?.predictedClass || !Object.hasOwn(persistedFlow, "nfstream") || !persistedDetail?.network?.fiveTuple?.sourceIp || !persistedDetail?.encryptedMetadata?.tls || !persistedDetail?.splt?.sequence || !persistedFlow?.classScores) throw new Error("检测任务没有持久化完整逐流详情、NFStream 字段或标注快照");
-    const key = await caller.apiKeys.create({ name: "E2E 验证" }); apiKeyId = key.id; const form = new FormData(); form.append("pcap", new Blob([pcap(1400)], { type: "application/vnd.tcpdump.pcap" }), `e2e-http-${suffix}.pcap`); form.append("modelId", `${modelId}`); const response = await fetch("http://localhost:3000/api/v1/detect", { method: "POST", headers: { "x-api-key": key.rawKey }, body: form }); const httpResult = await response.json() as { taskId?: number; summary?: { flowCount?: number; encryptionMetadata?: { tlsFlows?: number } }; flows?: Array<{ network?: { fiveTuple?: { sourceIp?: string } }; nfstream?: { source?: string }; encryptedMetadata?: { tls?: { version?: string } }; splt?: { sequence?: unknown[] }; classification?: { predictedClass?: string; probabilities?: Record<string, number> }; risk?: { reasons?: string[] } }> }; httpTaskId = httpResult.taskId ?? null; const firstFlow = httpResult.flows?.[0]; const httpExport = httpTaskId ? await caller.history.detectionExport({ taskId: httpTaskId }) : null; const auditLogs = await caller.history.logs({ limit: 500 }); const pagedDetections = await caller.history.detections({ page: 1, pageSize: 5 }); const pagedLogs = await caller.history.operationLogs({ page: 1, pageSize: 5 }); if (!response.ok || !httpResult.summary?.flowCount || !httpResult.summary.encryptionMetadata || !firstFlow?.network?.fiveTuple?.sourceIp || !firstFlow.nfstream?.source || !firstFlow.encryptedMetadata?.tls || !firstFlow.splt?.sequence || !firstFlow.classification?.probabilities || !firstFlow.risk?.reasons || !httpExport?.flows.length || !Object.hasOwn(httpExport.flows[0], "nfstream") || !auditLogs.some(log => log.action === "api_key.created" && log.entityId === key.id) || !pagedDetections.items.some(item => item.id === httpTaskId) || !pagedLogs.items.length) throw new Error(`HTTP、NFStream、审计、分页或详细历史验证失败：${JSON.stringify(httpResult)}`);
-    console.log(JSON.stringify({ uploadStatus: "completed", datasets: createdDatasetIds.length, modelVersion: trained.versionName, macroF1: trained.metrics.macroF1, detectionTaskId: taskId, scoredFlows: detail.flows.length, httpApiFlows: httpResult.summary.flowCount, predictedClass: firstFlow.classification.predictedClass, tlsVersion: firstFlow.encryptedMetadata.tls.version, spltPoints: firstFlow.splt.sequence.length }, null, 2));
-  } finally { if (keepData) return;
+    const labels = [
+      { key: "benign", name: "基线流量", enabled: true, isNormal: true }, { key: "c2_channel", name: "控制通道", enabled: true, isNormal: false }, { key: "data_exfiltration", name: "外传行为", enabled: true, isNormal: false },
+      { key: "lateral_movement", name: "横向移动", enabled: true, isNormal: false }, { key: "malware_transfer", name: "恶意传输", enabled: true, isNormal: false },
+    ] as const;
+    annotationSetId = (await caller.annotationSets.create({ name: `E2E 标注集 ${suffix}`, description: "端到端验证用五类标签集", labels: [...labels], isDefault: false })).id;
+    const configured = (await caller.annotationSets.list()).find(set => set.id === annotationSetId);
+    if (!configured || configured.labels.length !== 5) throw new Error("五类标注集创建或查询失败");
+    await caller.annotationSets.update({ id: annotationSetId, isActive: false });
+    let inactiveRejected = false;
+    try { await caller.datasets.createUploadJob({ name: `e2e-inactive-${suffix}.pcap`, fileBase64: asDataUrl(pcap(30)), trafficClass: "benign", annotationSetId }); } catch { inactiveRejected = true; }
+    if (!inactiveRejected) throw new Error("停用标注集仍可创建上传任务");
+    await caller.annotationSets.update({ id: annotationSetId, isActive: true });
+    const uploadAndProcess = async (trafficClass: TrafficClass, payloadLength: number) => {
+      const jobId = await caller.datasets.createUploadJob({ name: `e2e-${trafficClass}-${suffix}.pcap`, fileBase64: asDataUrl(pcap(payloadLength)), trafficClass, annotationSetId }); uploadJobIds.push(jobId);
+      const queued = await caller.datasets.uploadJob({ jobId }); if (queued?.status !== "queued" || queued.annotationSetId !== annotationSetId) throw new Error("上传任务未正确引用标注集");
+      const processed = await caller.datasets.processUploadJob({ jobId }); createdDatasetIds.push(processed.datasetId);
+      const completed = await caller.datasets.uploadJob({ jobId }); if (completed?.status !== "completed" || completed.progress !== 100) throw new Error("PCAP 解析任务没有完成");
+      return processed.datasetId;
+    };
+    const classes: TrafficClass[] = ["benign", "c2_channel", "data_exfiltration", "lateral_movement", "malware_transfer"];
+    const lengths = [30, 130, 550, 1000, 1600];
+    const datasetIds = await Promise.all(classes.map((label, index) => uploadAndProcess(label, lengths[index])));
+    const datasetExport = await caller.history.datasetExport({ datasetId: datasetIds[0] }); const pagedDatasets = await caller.history.datasets({ page: 1, pageSize: 5 });
+    if (!datasetExport.flowFeatures.length || !Object.hasOwn(datasetExport.flowFeatures[0], "nfstream") || !Object.hasOwn(datasetExport.flowFeatures[0], "abonnen") || datasetExport.dataset.trafficClass !== "benign" || pagedDatasets.total < 5) throw new Error("训练数据归档、Abonnen/NFStream 字段或分页验证失败");
+    trainingJobId = await caller.models.createTrainingJob({ datasetIds, annotationSetId, features: [...FEATURE_OPTIONS], algorithm: "abonnen_random_forest" });
+    const trained = await caller.models.train({ jobId: trainingJobId, datasetIds, annotationSetId, features: [...FEATURE_OPTIONS], algorithm: "abonnen_random_forest" });
+    modelId = trained.modelId; await caller.models.activate({ modelId });
+    const modelExport = await caller.history.modelExport({ modelId }); const pagedModels = await caller.history.models({ page: 1, pageSize: 5 });
+    if (modelExport.algorithm !== "abonnen_random_forest" || !Array.isArray(modelExport.classSet) || modelExport.classSet.length !== 5 || !modelExport.annotationSnapshotJson || !pagedModels.items.some(item => item.id === modelId)) throw new Error("上游模型归档、标注快照或分页验证失败");
+    const analyzed = await caller.detections.analyze({ name: `e2e-detection-${suffix}.pcap`, fileBase64: asDataUrl(pcap(1400)), modelId }); taskId = analyzed.taskId;
+    const detail = await caller.detections.detail({ taskId }); const persistedFlow = detail?.flows[0]; const persistedDetail = persistedFlow?.featureDetail?.detail;
+    if (!detail || detail.task.annotationSetId !== annotationSetId || !detail.task.annotationSnapshotJson || detail.task.totalFlows < 5 || !persistedFlow?.predictedClass || !Object.hasOwn(persistedFlow, "nfstream") || !persistedDetail?.network?.fiveTuple?.sourceIp || !persistedDetail?.encryptedMetadata?.tls || !persistedDetail?.splt?.sequence || !persistedFlow?.classScores) throw new Error("检测任务没有持久化完整逐流详情、NFStream 字段或标注快照");
+    const key = await caller.apiKeys.create({ name: "E2E 验证" }); apiKeyId = key.id;
+    const form = new FormData(); form.append("file", new Blob([pcap(1400)], { type: "application/vnd.tcpdump.pcap" }), `e2e-http-${suffix}.pcap`); form.append("modelVersionId", `${modelId}`);
+    const baseUrl = process.env.E2E_BASE_URL ?? "http://localhost:3000";
+    const response = await fetch(`${baseUrl}/api/v1/detect`, { method: "POST", headers: { Authorization: `Bearer ${key.rawKey}` }, body: form });
+    const httpResult = await response.json() as { task?: { id?: number }; summary?: { flowCount?: number; encryptionMetadata?: { tlsFlows?: number } }; flows?: Array<{ network?: { fiveTuple?: { sourceIp?: string } }; nfstream?: { source?: string }; encryptedMetadata?: { tls?: { version?: string } }; splt?: { sequence?: unknown[] }; classification?: { predictedClass?: string; probabilities?: Record<string, number> }; risk?: { reasons?: string[] } }> };
+    httpTaskId = httpResult.task?.id ?? null; const firstFlow = httpResult.flows?.[0]; const httpExport = httpTaskId ? await caller.history.detectionExport({ taskId: httpTaskId }) : null;
+    const auditLogs = await caller.history.logs({ limit: 500 }); const pagedDetections = await caller.history.detections({ page: 1, pageSize: 5 }); const pagedLogs = await caller.history.operationLogs({ page: 1, pageSize: 5 });
+    if (!response.ok || !httpResult.summary?.flowCount || !httpResult.summary.encryptionMetadata || !firstFlow?.network?.fiveTuple?.sourceIp || !firstFlow.nfstream?.source || !firstFlow.encryptedMetadata?.tls || !firstFlow.splt?.sequence || Object.keys(firstFlow.classification?.probabilities ?? {}).length !== 5 || !firstFlow.risk?.reasons || !httpExport?.flows.length || !Object.hasOwn(httpExport.flows[0], "nfstream") || !auditLogs.some(log => log.action === "api_key.created" && log.entityId === key.id) || !pagedDetections.items.some(item => item.id === httpTaskId) || !pagedLogs.items.length) throw new Error(`HTTP、上游概率、NFStream、审计、分页或详细历史验证失败：${JSON.stringify(httpResult)}`);
+    console.log(JSON.stringify({ uploadStatus: "completed", datasets: createdDatasetIds.length, modelVersion: trained.versionName, macroF1: (trained.metrics as { macroF1: number }).macroF1, detectionTaskId: taskId, scoredFlows: detail.flows.length, httpApiFlows: httpResult.summary.flowCount, predictedClass: firstFlow.classification?.predictedClass, tlsVersion: firstFlow.encryptedMetadata?.tls?.version, spltPoints: firstFlow.splt?.sequence?.length }, null, 2));
+  } finally {
+    if (keepData) return;
     for (const currentTaskId of [taskId, httpTaskId].filter((value): value is number => Boolean(value))) { await db.delete(detectionFlows).where(eq(detectionFlows.taskId, currentTaskId)); await db.delete(detectionTasks).where(eq(detectionTasks.id, currentTaskId)); }
-    if (apiKeyId) await db.delete(apiKeys).where(and(eq(apiKeys.id, apiKeyId), eq(apiKeys.userId, user.id))); if (modelId) await db.delete(modelVersions).where(and(eq(modelVersions.id, modelId), eq(modelVersions.userId, user.id))); if (previousActive) await db.update(modelVersions).set({ isActive: true }).where(eq(modelVersions.id, previousActive.id)); if (trainingJobId) await db.delete(trainingJobs).where(eq(trainingJobs.id, trainingJobId)); if (createdDatasetIds.length) { await db.delete(flowFeatures).where(inArray(flowFeatures.datasetId, createdDatasetIds)); await db.delete(datasets).where(and(eq(datasets.userId, user.id), inArray(datasets.id, createdDatasetIds))); } if (uploadJobIds.length) await db.delete(uploadTasks).where(and(eq(uploadTasks.userId, user.id), inArray(uploadTasks.id, uploadJobIds))); if (annotationSetId) await db.delete(annotationSets).where(eq(annotationSets.id, annotationSetId)); const auditRows = await caller.history.logs({ limit: 500 }); const createdAuditIds = auditRows.filter(log => !auditLogBaseline.has(log.id)).map(log => log.id); if (createdAuditIds.length) await db.delete(operationLogs).where(inArray(operationLogs.id, createdAuditIds)); }
+    if (apiKeyId) await db.delete(apiKeys).where(and(eq(apiKeys.id, apiKeyId), eq(apiKeys.userId, user.id)));
+    if (modelId) await db.delete(modelVersions).where(and(eq(modelVersions.id, modelId), eq(modelVersions.userId, user.id)));
+    if (previousActive) await db.update(modelVersions).set({ isActive: true }).where(eq(modelVersions.id, previousActive.id));
+    if (trainingJobId) await db.delete(trainingJobs).where(eq(trainingJobs.id, trainingJobId));
+    if (createdDatasetIds.length) { await db.delete(flowFeatures).where(inArray(flowFeatures.datasetId, createdDatasetIds)); await db.delete(datasets).where(and(eq(datasets.userId, user.id), inArray(datasets.id, createdDatasetIds))); }
+    if (uploadJobIds.length) await db.delete(uploadTasks).where(and(eq(uploadTasks.userId, user.id), inArray(uploadTasks.id, uploadJobIds)));
+    if (annotationSetId) await db.delete(annotationSets).where(eq(annotationSets.id, annotationSetId));
+    const auditRows = await caller.history.logs({ limit: 500 }); const createdAuditIds = auditRows.filter(log => !auditLogBaseline.has(log.id)).map(log => log.id); if (createdAuditIds.length) await db.delete(operationLogs).where(inArray(operationLogs.id, createdAuditIds));
+  }
 }
 main().then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

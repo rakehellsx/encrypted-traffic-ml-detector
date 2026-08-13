@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AbonnenFeatureSource, AbonnenFeatureValues } from "./abonnen";
 
 export type SpltPoint = { length: number; iatMs: number; direction: "up" | "down" };
 
@@ -28,6 +29,9 @@ export type FlowFeature = {
   sniVisibility: "visible" | "not_observed";
   sni: string | null;
   nfstream?: { key: string; bidirectional_packets: number; bidirectional_bytes: number; duration_ms: number; application_name?: string | null; splt_direction: number[]; splt_ps: number[]; splt_piat_ms: number[] } | null;
+  /** Abonnen/Malicious_TLS_Detection 30-field TLS feature vector. */
+  abonnen?: AbonnenFeatureValues;
+  abonnenSource?: AbonnenFeatureSource;
 };
 
 export type PcapAnalysis = {

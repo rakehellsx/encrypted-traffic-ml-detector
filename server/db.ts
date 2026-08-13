@@ -162,6 +162,8 @@ export async function insertFlowFeatures(datasetId: number, flows: FlowFeature[]
       uplinkRatio: flow.uplinkRatio,
       spltJson: JSON.stringify(flow.splt),
       nfstreamJson: flow.nfstream ? JSON.stringify(flow.nfstream) : null,
+      abonnenJson: flow.abonnen ? JSON.stringify(flow.abonnen) : null,
+      abonnenSource: flow.abonnenSource ?? "native_compatibility",
       tlsVersion: flow.tlsVersion,
       ja3: flow.ja3,
       sniVisibility: flow.sniVisibility,
@@ -201,7 +203,7 @@ export async function listDatasetFeatures(userId: number, datasetId: number, lim
   if (!dataset) throw new Error("数据集不存在或无访问权限");
   const db = await requiredDb();
   const rows = await db.select().from(flowFeatures).where(eq(flowFeatures.datasetId, datasetId)).limit(limit);
-  return rows.map(row => ({ ...row, nfstream: row.nfstreamJson ? { ...JSON.parse(row.nfstreamJson), source: "nfstream" } : null }));
+  return rows.map(row => ({ ...row, nfstream: row.nfstreamJson ? { ...JSON.parse(row.nfstreamJson), source: "nfstream" } : null, abonnen: row.abonnenJson ? JSON.parse(row.abonnenJson) : null }));
 }
 
 function toFlowFeature(row: typeof flowFeatures.$inferSelect): FlowFeature {
@@ -227,6 +229,8 @@ function toFlowFeature(row: typeof flowFeatures.$inferSelect): FlowFeature {
     uplinkRatio: row.uplinkRatio,
     splt: JSON.parse(row.spltJson),
     nfstream: row.nfstreamJson ? { ...JSON.parse(row.nfstreamJson), source: "nfstream" } : null,
+    abonnen: row.abonnenJson ? JSON.parse(row.abonnenJson) : undefined,
+    abonnenSource: row.abonnenSource as FlowFeature["abonnenSource"],
     tlsVersion: row.tlsVersion,
     ja3: row.ja3,
     sniVisibility: row.sniVisibility,
@@ -304,6 +308,7 @@ export async function activateModel(userId: number, modelId: number) {
   const db = await requiredDb();
   const model = await getModel(userId, modelId);
   if (!model) throw new Error("模型不存在或无访问权限");
+  if (model.algorithm !== "abonnen_random_forest" && model.algorithm !== "abonnen_gbdt") throw new Error("历史模型仅可查看；请训练并激活 Abonnen TLS 模型");
   await db.update(modelVersions).set({ isActive: false }).where(eq(modelVersions.userId, userId));
   await db.update(modelVersions).set({ isActive: true }).where(eq(modelVersions.id, modelId));
   await logOperation({ userId, action: "model.activated", entityType: "model_version", entityId: modelId, summary: `已激活模型版本：${model.versionName}`, metadata: { versionName: model.versionName } });
@@ -346,7 +351,7 @@ export async function createDetectionTask(input: { userId: number; modelVersionI
   return id;
 }
 
-export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: FlowFeature; score: number; predictedClass: TrafficClass; classScores: Record<string, number>; reasons: string[]; featureValues: Record<string, number>; detail?: unknown }>) {
+export async function insertDetectionFlows(taskId: number, flows: Array<{ flow: FlowFeature; score: number; predictedClass: TrafficClass; classScores: Record<string, number>; reasons: string[]; featureValues: Record<string, number | string>; detail?: unknown }>) {
   const db = await requiredDb();
   for (let offset = 0; offset < flows.length; offset += 400) {
     await db.insert(detectionFlows).values(flows.slice(offset, offset + 400).map(entry => ({
