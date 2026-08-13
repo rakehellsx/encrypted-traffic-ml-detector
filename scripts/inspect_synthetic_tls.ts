@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { analyzePcap } from '../server/trafficAnalysis.ts';
 
-const result = analyzePcap(readFileSync(process.argv[2]));
+const samplePath = process.argv[2] ?? resolve(process.cwd(), '../Downloads/synthetic-tls-handshakes.pcap');
+const result = analyzePcap(readFileSync(samplePath));
 console.log(JSON.stringify({
   packets: result.packetCount,
   flows: result.flows.map((flow) => ({
