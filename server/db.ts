@@ -53,6 +53,18 @@ export async function getUserByOpenId(openId: string) {
   return result[0];
 }
 
+const PUBLIC_WORKSPACE_OPEN_ID = "trafficguard_public_workspace";
+
+export async function getPublicWorkspaceUser() {
+  let user = await getUserByOpenId(PUBLIC_WORKSPACE_OPEN_ID);
+  if (!user) {
+    await upsertUser({ openId: PUBLIC_WORKSPACE_OPEN_ID, name: "TrafficGuard 公共工作区", loginMethod: "public", role: "admin" });
+    user = await getUserByOpenId(PUBLIC_WORKSPACE_OPEN_ID);
+  }
+  if (!user) throw new Error("公共工作区初始化失败，请稍后重试");
+  return user;
+}
+
 function legacyLabel(trafficClass: TrafficClass | "unlabeled") {
   return trafficClass === "benign" ? "benign" : trafficClass === "unlabeled" ? "unlabeled" : "malicious";
 }

@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { appRouter } from "../server/routers";
-import { getDb } from "../server/db";
+import { getDb, getPublicWorkspaceUser } from "../server/db";
 import { apiKeys, datasets, detectionFlows, detectionTasks, flowFeatures, modelVersions, trainingJobs, uploadTasks, users } from "../drizzle/schema";
 import type { TrafficClass } from "../server/modelEngine";
 
@@ -13,7 +13,7 @@ function pcap(payloadLength: number) { const header = Buffer.alloc(24); header.w
 function asDataUrl(buffer: Buffer) { return `data:application/vnd.tcpdump.pcap;base64,${buffer.toString("base64")}`; }
 
 async function main() {
-  const db = await getDb(); if (!db) throw new Error("E2E 验证需要数据库连接"); const existingUsers = await db.select().from(users).limit(1); if (!existingUsers[0]) throw new Error("E2E 验证需要已登录的应用用户"); const user = existingUsers[0]; const caller = appRouter.createCaller({ user, req: {} as any, res: {} as any }); const suffix = Date.now(); const createdDatasetIds: number[] = []; const uploadJobIds: number[] = []; let trainingJobId: number | null = null; let modelId: number | null = null; let taskId: number | null = null; let apiKeyId: number | null = null; const previousActive = (await caller.models.list()).find(model => model.isActive);
+  const db = await getDb(); if (!db) throw new Error("E2E 验证需要数据库连接"); const user = await getPublicWorkspaceUser(); const caller = appRouter.createCaller({ user, req: {} as any, res: {} as any }); const suffix = Date.now(); const createdDatasetIds: number[] = []; const uploadJobIds: number[] = []; let trainingJobId: number | null = null; let modelId: number | null = null; let taskId: number | null = null; let apiKeyId: number | null = null; const previousActive = (await caller.models.list()).find(model => model.isActive);
   try {
     const uploadAndProcess = async (trafficClass: TrafficClass, payloadLength: number) => { const jobId = await caller.datasets.createUploadJob({ name: `e2e-${trafficClass}-${suffix}.pcap`, fileBase64: asDataUrl(pcap(payloadLength)), trafficClass }); uploadJobIds.push(jobId); const queued = await caller.datasets.uploadJob({ jobId }); if (queued?.status !== "queued") throw new Error(`上传任务未进入 queued 状态：${queued?.status}`); const processed = await caller.datasets.processUploadJob({ jobId }); createdDatasetIds.push(processed.datasetId); const completed = await caller.datasets.uploadJob({ jobId }); if (completed?.status !== "completed" || completed.progress !== 100) throw new Error("PCAP 解析任务没有完成"); return processed.datasetId; };
     const classSet: TrafficClass[] = ["benign", "c2_channel", "data_exfiltration"]; const datasetIds = [await uploadAndProcess("benign", 30), await uploadAndProcess("c2_channel", 250), await uploadAndProcess("data_exfiltration", 1200)]; const features = ["packetCount", "byteCount", "avgPacketLength", "uplinkRatio"] as const;
