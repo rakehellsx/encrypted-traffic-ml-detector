@@ -10,7 +10,7 @@ export const users = mysqlTable("users", {
 
 export const datasets = mysqlTable("datasets", {
   id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), name: varchar("name", { length: 255 }).notNull(), storageKey: varchar("storageKey", { length: 512 }).notNull(), fileSize: int("fileSize").notNull(), packetCount: int("packetCount").default(0).notNull(), flowCount: int("flowCount").default(0).notNull(), protocolJson: text("protocolJson").notNull(),
-  label: mysqlEnum("label", ["benign", "malicious", "unlabeled"]).default("unlabeled").notNull(), trafficClass: varchar("trafficClass", { length: 32 }).default("unlabeled").notNull(),
+  label: mysqlEnum("label", ["benign", "malicious", "unlabeled"]).default("unlabeled").notNull(), trafficClass: varchar("trafficClass", { length: 32 }).default("unlabeled").notNull(), annotationSetId: int("annotationSetId"), annotationSnapshotJson: text("annotationSnapshotJson"),
   extractionStatus: mysqlEnum("extractionStatus", ["ready", "failed"]).default("ready").notNull(), errorMessage: text("errorMessage"), createdAt: timestamp("createdAt").defaultNow().notNull(), updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, table => [uniqueIndex("datasets_user_name_idx").on(table.userId, table.name)]);
 
@@ -20,19 +20,19 @@ export const flowFeatures = mysqlTable("flowFeatures", {
 }, table => [uniqueIndex("flow_features_dataset_key_idx").on(table.datasetId, table.flowKey)]);
 
 export const modelVersions = mysqlTable("modelVersions", {
-  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), versionName: varchar("versionName", { length: 64 }).notNull(), algorithm: mysqlEnum("algorithm", ["logistic_regression", "gaussian_nb"]).notNull(), featureSetJson: text("featureSetJson").notNull(), classSetJson: text("classSetJson").notNull(), metricsJson: text("metricsJson").notNull(), modelJson: text("modelJson").notNull(), trainedDatasetIdsJson: text("trainedDatasetIdsJson").notNull(), isActive: boolean("isActive").default(false).notNull(), createdAt: timestamp("createdAt").defaultNow().notNull(),
+  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), versionName: varchar("versionName", { length: 64 }).notNull(), algorithm: mysqlEnum("algorithm", ["logistic_regression", "gaussian_nb"]).notNull(), featureSetJson: text("featureSetJson").notNull(), classSetJson: text("classSetJson").notNull(), annotationSetId: int("annotationSetId"), annotationSnapshotJson: text("annotationSnapshotJson"), metricsJson: text("metricsJson").notNull(), modelJson: text("modelJson").notNull(), trainedDatasetIdsJson: text("trainedDatasetIdsJson").notNull(), isActive: boolean("isActive").default(false).notNull(), createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [uniqueIndex("model_versions_user_version_idx").on(table.userId, table.versionName)]);
 
 export const trainingJobs = mysqlTable("trainingJobs", {
-  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(), progress: int("progress").default(0).notNull(), algorithm: mysqlEnum("algorithm", ["logistic_regression", "gaussian_nb"]).notNull(), datasetIdsJson: text("datasetIdsJson").notNull(), featureSetJson: text("featureSetJson").notNull(), classSetJson: text("classSetJson").notNull(), modelVersionId: int("modelVersionId"), errorMessage: text("errorMessage"), createdAt: timestamp("createdAt").defaultNow().notNull(), updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(), progress: int("progress").default(0).notNull(), algorithm: mysqlEnum("algorithm", ["logistic_regression", "gaussian_nb"]).notNull(), datasetIdsJson: text("datasetIdsJson").notNull(), featureSetJson: text("featureSetJson").notNull(), classSetJson: text("classSetJson").notNull(), annotationSetId: int("annotationSetId"), annotationSnapshotJson: text("annotationSnapshotJson"), modelVersionId: int("modelVersionId"), errorMessage: text("errorMessage"), createdAt: timestamp("createdAt").defaultNow().notNull(), updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const uploadTasks = mysqlTable("uploadTasks", {
-  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), fileName: varchar("fileName", { length: 255 }).notNull(), storageKey: varchar("storageKey", { length: 512 }).notNull(), fileSize: int("fileSize").notNull(), label: mysqlEnum("label", ["benign", "malicious", "unlabeled"]).default("unlabeled").notNull(), trafficClass: varchar("trafficClass", { length: 32 }).default("unlabeled").notNull(), status: mysqlEnum("status", ["queued", "processing", "completed", "failed"]).default("queued").notNull(), progress: int("progress").default(0).notNull(), datasetId: int("datasetId"), errorMessage: text("errorMessage"), createdAt: timestamp("createdAt").defaultNow().notNull(), updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), fileName: varchar("fileName", { length: 255 }).notNull(), storageKey: varchar("storageKey", { length: 512 }).notNull(), fileSize: int("fileSize").notNull(), label: mysqlEnum("label", ["benign", "malicious", "unlabeled"]).default("unlabeled").notNull(), trafficClass: varchar("trafficClass", { length: 32 }).default("unlabeled").notNull(), annotationSetId: int("annotationSetId"), annotationSnapshotJson: text("annotationSnapshotJson"), status: mysqlEnum("status", ["queued", "processing", "completed", "failed"]).default("queued").notNull(), progress: int("progress").default(0).notNull(), datasetId: int("datasetId"), errorMessage: text("errorMessage"), createdAt: timestamp("createdAt").defaultNow().notNull(), updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export const detectionTasks = mysqlTable("detectionTasks", {
-  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), modelVersionId: int("modelVersionId").notNull(), fileName: varchar("fileName", { length: 255 }).notNull(), storageKey: varchar("storageKey", { length: 512 }).notNull(), status: mysqlEnum("status", ["completed", "failed"]).default("completed").notNull(), totalFlows: int("totalFlows").default(0).notNull(), highRiskFlows: int("highRiskFlows").default(0).notNull(), averageRisk: double("averageRisk").default(0).notNull(), summaryJson: text("summaryJson").notNull(), errorMessage: text("errorMessage"), createdAt: timestamp("createdAt").defaultNow().notNull(),
+  id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), modelVersionId: int("modelVersionId").notNull(), annotationSetId: int("annotationSetId"), annotationSnapshotJson: text("annotationSnapshotJson"), fileName: varchar("fileName", { length: 255 }).notNull(), storageKey: varchar("storageKey", { length: 512 }).notNull(), status: mysqlEnum("status", ["completed", "failed"]).default("completed").notNull(), totalFlows: int("totalFlows").default(0).notNull(), highRiskFlows: int("highRiskFlows").default(0).notNull(), averageRisk: double("averageRisk").default(0).notNull(), summaryJson: text("summaryJson").notNull(), errorMessage: text("errorMessage"), createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export const detectionFlows = mysqlTable("detectionFlows", {
@@ -53,6 +53,18 @@ export const operationLogs = mysqlTable("operationLogs", {
 export const apiKeys = mysqlTable("apiKeys", {
   id: int("id").autoincrement().primaryKey(), userId: int("userId").notNull(), name: varchar("name", { length: 80 }).notNull(), keyPrefix: varchar("keyPrefix", { length: 16 }).notNull(), keyHash: varchar("keyHash", { length: 64 }).notNull(), isActive: boolean("isActive").default(true).notNull(), lastUsedAt: timestamp("lastUsedAt"), createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+export const annotationSets = mysqlTable("annotationSets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 96 }).notNull(),
+  description: varchar("description", { length: 255 }),
+  labelsJson: text("labelsJson").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  isDefault: boolean("isDefault").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [uniqueIndex("annotation_sets_user_name_idx").on(table.userId, table.name)]);
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;

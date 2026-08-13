@@ -1,13 +1,14 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Archive, BrainCircuit, Database, Gauge, LayoutDashboard, Radar, UploadCloud } from "lucide-react";
+import { Archive, BrainCircuit, Database, Gauge, LayoutDashboard, Radar, Tags, UploadCloud } from "lucide-react";
 import { useLocation } from "wouter";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "态势总览", path: "/" },
   { icon: UploadCloud, label: "样本上传", path: "/upload" },
   { icon: Database, label: "数据管理", path: "/datasets" },
+  { icon: Tags, label: "标注配置", path: "/annotations" },
   { icon: BrainCircuit, label: "模型训练", path: "/training" },
   { icon: Gauge, label: "模型版本", path: "/models" },
   { icon: Radar, label: "流量检测", path: "/detections" },

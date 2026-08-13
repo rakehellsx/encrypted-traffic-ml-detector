@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   apiKeys,
+  annotationSets,
   datasets,
   detectionFlows,
   detectionTasks,
@@ -17,6 +18,7 @@ import {
 import { ENV } from "./_core/env";
 import type { FeatureName, ModelAlgorithm, TrafficClass } from "./modelEngine";
 import type { FlowFeature } from "./trafficAnalysis";
+import { DEFAULT_ANNOTATION_LABELS, type AnnotationLabel, type AnnotationSetSnapshot } from "@shared/annotationSets";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -70,19 +72,56 @@ function legacyLabel(trafficClass: TrafficClass | "unlabeled") {
   return trafficClass === "benign" ? "benign" : trafficClass === "unlabeled" ? "unlabeled" : "malicious";
 }
 
-export async function createDataset(input: { userId: number; name: string; storageKey: string; fileSize: number; packetCount: number; flowCount: number; protocolDistribution: Record<string, number>; trafficClass: TrafficClass | "unlabeled" }) {
+function toAnnotationSnapshot(row: typeof annotationSets.$inferSelect): AnnotationSetSnapshot {
+  return { id: row.id, name: row.name, description: row.description ?? undefined, labels: JSON.parse(row.labelsJson) as AnnotationLabel[], isActive: row.isActive, isDefault: row.isDefault };
+}
+
+export async function ensureDefaultAnnotationSet(userId: number) {
   const db = await requiredDb();
-  const inserted = await db.insert(datasets).values({ ...input, label: legacyLabel(input.trafficClass), protocolJson: JSON.stringify(input.protocolDistribution) });
+  const existing = await db.select().from(annotationSets).where(eq(annotationSets.userId, userId)).orderBy(desc(annotationSets.isDefault), desc(annotationSets.createdAt));
+  if (existing.length) return existing;
+  const result = await db.insert(annotationSets).values({ userId, name: "默认标注集", description: "内置的多分类标注定义，可复制后编辑", labelsJson: JSON.stringify(DEFAULT_ANNOTATION_LABELS), isDefault: true, isActive: true });
+  const id = Number(result[0].insertId);
+  await logOperation({ userId, action: "annotation_set.created", entityType: "annotation_set", entityId: id, summary: "已初始化默认标注集", metadata: { name: "默认标注集" } });
+  return db.select().from(annotationSets).where(eq(annotationSets.userId, userId)).orderBy(desc(annotationSets.isDefault), desc(annotationSets.createdAt));
+}
+
+export async function listAnnotationSets(userId: number) { return (await ensureDefaultAnnotationSet(userId)).map(toAnnotationSnapshot); }
+export async function getAnnotationSet(userId: number, annotationSetId?: number) {
+  const sets = await ensureDefaultAnnotationSet(userId);
+  const target = annotationSetId ? sets.find(set => set.id === annotationSetId) : sets.find(set => set.isDefault && set.isActive) ?? sets.find(set => set.isActive);
+  if (!target || !target.isActive) throw new Error("标注集不存在或已停用");
+  return toAnnotationSnapshot(target);
+}
+export async function createAnnotationSet(input: { userId: number; name: string; description?: string; labels: AnnotationLabel[]; isDefault?: boolean }) {
+  const db = await requiredDb();
+  if (input.isDefault) await db.update(annotationSets).set({ isDefault: false }).where(eq(annotationSets.userId, input.userId));
+  const result = await db.insert(annotationSets).values({ userId: input.userId, name: input.name, description: input.description ?? null, labelsJson: JSON.stringify(input.labels), isDefault: Boolean(input.isDefault), isActive: true });
+  const id = Number(result[0].insertId);
+  await logOperation({ userId: input.userId, action: "annotation_set.created", entityType: "annotation_set", entityId: id, summary: `已创建标注集：${input.name}`, metadata: { labels: input.labels } });
+  return id;
+}
+export async function updateAnnotationSet(input: { userId: number; id: number; name?: string; description?: string; labels?: AnnotationLabel[]; isActive?: boolean; isDefault?: boolean }) {
+  const db = await requiredDb(); const current = (await db.select().from(annotationSets).where(and(eq(annotationSets.id, input.id), eq(annotationSets.userId, input.userId))).limit(1))[0]; if (!current) throw new Error("标注集不存在");
+  if (input.isDefault) await db.update(annotationSets).set({ isDefault: false }).where(eq(annotationSets.userId, input.userId));
+  const values: Record<string, unknown> = {}; if (input.name !== undefined) values.name = input.name; if (input.description !== undefined) values.description = input.description; if (input.labels !== undefined) values.labelsJson = JSON.stringify(input.labels); if (input.isActive !== undefined) values.isActive = input.isActive; if (input.isDefault !== undefined) values.isDefault = input.isDefault;
+  await db.update(annotationSets).set(values).where(eq(annotationSets.id, input.id)); await logOperation({ userId: input.userId, action: "annotation_set.updated", entityType: "annotation_set", entityId: input.id, summary: `已更新标注集：${input.name ?? current.name}`, metadata: values });
+}
+export async function deleteAnnotationSet(userId: number, id: number) { const db = await requiredDb(); const current = (await db.select().from(annotationSets).where(and(eq(annotationSets.id, id), eq(annotationSets.userId, userId))).limit(1))[0]; if (!current) throw new Error("标注集不存在"); if (current.isDefault) throw new Error("默认标注集不能删除，请先设置其他默认集"); await db.delete(annotationSets).where(eq(annotationSets.id, id)); await logOperation({ userId, action: "annotation_set.deleted", entityType: "annotation_set", entityId: id, summary: `已删除标注集：${current.name}`, metadata: {} }); }
+
+export async function createDataset(input: { userId: number; name: string; storageKey: string; fileSize: number; packetCount: number; flowCount: number; protocolDistribution: Record<string, number>; trafficClass: TrafficClass | "unlabeled"; annotationSetId?: number; annotationSnapshot?: AnnotationSetSnapshot }) {
+  const db = await requiredDb();
+  const inserted = await db.insert(datasets).values({ ...input, annotationSnapshotJson: input.annotationSnapshot ? JSON.stringify(input.annotationSnapshot) : null, label: legacyLabel(input.trafficClass), protocolJson: JSON.stringify(input.protocolDistribution) });
   const id = Number(inserted[0].insertId);
-  await logOperation({ userId: input.userId, action: "dataset.created", entityType: "dataset", entityId: id, summary: `已保存训练数据集：${input.name}`, metadata: { trafficClass: input.trafficClass, packetCount: input.packetCount, flowCount: input.flowCount } });
+  await logOperation({ userId: input.userId, action: "dataset.created", entityType: "dataset", entityId: id, summary: `已保存训练数据集：${input.name}`, metadata: { trafficClass: input.trafficClass, annotationSetId: input.annotationSetId, packetCount: input.packetCount, flowCount: input.flowCount } });
   return id;
 }
 
-export async function createUploadTask(input: { userId: number; fileName: string; storageKey: string; fileSize: number; trafficClass: TrafficClass | "unlabeled" }) {
+export async function createUploadTask(input: { userId: number; fileName: string; storageKey: string; fileSize: number; trafficClass: TrafficClass | "unlabeled"; annotationSetId?: number; annotationSnapshot?: AnnotationSetSnapshot }) {
   const db = await requiredDb();
-  const result = await db.insert(uploadTasks).values({ ...input, label: legacyLabel(input.trafficClass) });
+  const result = await db.insert(uploadTasks).values({ ...input, annotationSnapshotJson: input.annotationSnapshot ? JSON.stringify(input.annotationSnapshot) : null, label: legacyLabel(input.trafficClass) });
   const id = Number(result[0].insertId);
-  await logOperation({ userId: input.userId, action: "upload.created", entityType: "upload_task", entityId: id, summary: `已创建 PCAP 解析任务：${input.fileName}`, metadata: { trafficClass: input.trafficClass, fileSize: input.fileSize } });
+  await logOperation({ userId: input.userId, action: "upload.created", entityType: "upload_task", entityId: id, summary: `已创建 PCAP 解析任务：${input.fileName}`, metadata: { trafficClass: input.trafficClass, annotationSetId: input.annotationSetId, fileSize: input.fileSize } });
   return id;
 }
 
@@ -141,10 +180,10 @@ export async function getDataset(userId: number, datasetId: number) {
   return rows[0];
 }
 
-export async function updateDatasetLabel(userId: number, datasetId: number, trafficClass: TrafficClass | "unlabeled") {
+export async function updateDatasetLabel(userId: number, datasetId: number, trafficClass: TrafficClass | "unlabeled", annotationSet?: AnnotationSetSnapshot) {
   const db = await requiredDb();
-  await db.update(datasets).set({ trafficClass, label: legacyLabel(trafficClass) }).where(and(eq(datasets.id, datasetId), eq(datasets.userId, userId)));
-  await logOperation({ userId, action: "dataset.labeled", entityType: "dataset", entityId: datasetId, summary: `已更新训练数据集类别为：${trafficClass}`, metadata: { trafficClass } });
+  await db.update(datasets).set({ trafficClass, label: legacyLabel(trafficClass), annotationSetId: annotationSet?.id ?? null, annotationSnapshotJson: annotationSet ? JSON.stringify(annotationSet) : null }).where(and(eq(datasets.id, datasetId), eq(datasets.userId, userId)));
+  await logOperation({ userId, action: "dataset.labeled", entityType: "dataset", entityId: datasetId, summary: `已更新训练数据集类别为：${trafficClass}`, metadata: { trafficClass, annotationSetId: annotationSet?.id } });
 }
 
 export async function deleteDataset(userId: number, datasetId: number) {
@@ -202,11 +241,11 @@ export async function getTrainingSamples(userId: number, datasetIds: number[]) {
   return rows.map(row => ({ flow: toFlowFeature(row), label: labels.get(row.datasetId) as TrafficClass }));
 }
 
-export async function createTrainingJob(input: { userId: number; algorithm: ModelAlgorithm; datasetIds: number[]; featureSet: FeatureName[]; classSet: TrafficClass[] }) {
+export async function createTrainingJob(input: { userId: number; algorithm: ModelAlgorithm; datasetIds: number[]; featureSet: FeatureName[]; classSet: TrafficClass[]; annotationSet: AnnotationSetSnapshot }) {
   const db = await requiredDb();
-  const result = await db.insert(trainingJobs).values({ userId: input.userId, algorithm: input.algorithm, datasetIdsJson: JSON.stringify(input.datasetIds), featureSetJson: JSON.stringify(input.featureSet), classSetJson: JSON.stringify(input.classSet), progress: 10 });
+  const result = await db.insert(trainingJobs).values({ userId: input.userId, algorithm: input.algorithm, datasetIdsJson: JSON.stringify(input.datasetIds), featureSetJson: JSON.stringify(input.featureSet), classSetJson: JSON.stringify(input.classSet), annotationSetId: input.annotationSet.id ?? null, annotationSnapshotJson: JSON.stringify(input.annotationSet), progress: 10 });
   const id = Number(result[0].insertId);
-  await logOperation({ userId: input.userId, action: "training.created", entityType: "training_job", entityId: id, summary: `已创建多分类训练任务（${input.classSet.length} 类）`, metadata: { algorithm: input.algorithm, datasetIds: input.datasetIds, classSet: input.classSet, featureSet: input.featureSet } });
+  await logOperation({ userId: input.userId, action: "training.created", entityType: "training_job", entityId: id, summary: `已创建多分类训练任务（${input.classSet.length} 类）`, metadata: { algorithm: input.algorithm, datasetIds: input.datasetIds, classSet: input.classSet, annotationSet: input.annotationSet, featureSet: input.featureSet } });
   return id;
 }
 
@@ -221,7 +260,7 @@ export async function getTrainingJob(userId: number, jobId: number) {
   return rows[0];
 }
 
-export async function createModel(input: { userId: number; versionName: string; algorithm: ModelAlgorithm; featureSet: FeatureName[]; classSet: TrafficClass[]; metrics: unknown; payload: unknown; datasetIds: number[]; isActive: boolean }) {
+export async function createModel(input: { userId: number; versionName: string; algorithm: ModelAlgorithm; featureSet: FeatureName[]; classSet: TrafficClass[]; annotationSet: AnnotationSetSnapshot; metrics: unknown; payload: unknown; datasetIds: number[]; isActive: boolean }) {
   const db = await requiredDb();
   const result = await db.insert(modelVersions).values({
     userId: input.userId,
@@ -229,13 +268,15 @@ export async function createModel(input: { userId: number; versionName: string; 
     algorithm: input.algorithm,
     featureSetJson: JSON.stringify(input.featureSet),
     classSetJson: JSON.stringify(input.classSet),
+    annotationSetId: input.annotationSet.id ?? null,
+    annotationSnapshotJson: JSON.stringify(input.annotationSet),
     metricsJson: JSON.stringify(input.metrics),
     modelJson: JSON.stringify(input.payload),
     trainedDatasetIdsJson: JSON.stringify(input.datasetIds),
     isActive: input.isActive,
   });
   const id = Number(result[0].insertId);
-  await logOperation({ userId: input.userId, action: "model.created", entityType: "model_version", entityId: id, summary: `已保存模型版本：${input.versionName}`, metadata: { algorithm: input.algorithm, classSet: input.classSet, datasetIds: input.datasetIds, isActive: input.isActive } });
+  await logOperation({ userId: input.userId, action: "model.created", entityType: "model_version", entityId: id, summary: `已保存模型版本：${input.versionName}`, metadata: { algorithm: input.algorithm, classSet: input.classSet, annotationSet: input.annotationSet, datasetIds: input.datasetIds, isActive: input.isActive } });
   return id;
 }
 
@@ -294,9 +335,9 @@ export async function revokeApiKey(userId: number, apiKeyId: number) {
   await logOperation({ userId, action: "api_key.revoked", entityType: "api_key", entityId: apiKeyId, summary: "已撤销接口密钥", metadata: {} });
 }
 
-export async function createDetectionTask(input: { userId: number; modelVersionId: number; fileName: string; storageKey: string; totalFlows: number; highRiskFlows: number; averageRisk: number; summary: unknown }) {
+export async function createDetectionTask(input: { userId: number; modelVersionId: number; annotationSet?: AnnotationSetSnapshot; fileName: string; storageKey: string; totalFlows: number; highRiskFlows: number; averageRisk: number; summary: unknown }) {
   const db = await requiredDb();
-  const result = await db.insert(detectionTasks).values({ ...input, summaryJson: JSON.stringify(input.summary) });
+  const result = await db.insert(detectionTasks).values({ ...input, annotationSetId: input.annotationSet?.id ?? null, annotationSnapshotJson: input.annotationSet ? JSON.stringify(input.annotationSet) : null, summaryJson: JSON.stringify(input.summary) });
   const id = Number(result[0].insertId);
   await logOperation({ userId: input.userId, action: "detection.completed", entityType: "detection_task", entityId: id, summary: `已完成检测任务：${input.fileName}`, metadata: { modelVersionId: input.modelVersionId, totalFlows: input.totalFlows, highRiskFlows: input.highRiskFlows, averageRisk: input.averageRisk } });
   return id;
