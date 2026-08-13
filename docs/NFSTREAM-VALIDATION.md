@@ -1,6 +1,6 @@
 # NFStream 公开 QUIC 样本验证
 
-本次验证使用公开仓库 `knqyf263/ndff` 中的 `tests/pcap/quic.pcap`。该文件仅作为 NFStream 与现有无解密检测管道的互操作样本，不代表恶意流量或 ECH 性能结论。
+本次验证使用公开仓库 `knqyf263/ndff` 中的 `tests/pcap/quic.pcap`。该仓库以 GPLv3 发布；本项目不将该 PCAP 纳入部署工件，仅将其作为本地可复现的验证样本。该文件不代表恶意流量或 ECH 性能结论。
 
 ```bash
 python3 scripts/validate_nfstream_sample.py /path/to/quic.pcap
@@ -13,4 +13,15 @@ NFStream 在该样本上提取到一条 UDP/443 双向流：413 个包、254,874
 ## 来源
 
 - https://github.com/knqyf263/ndff — QUIC PCAP 测试样本。
+- https://github.com/lbirchler/tls-decryption — 包含 `data/tls3/tls3.cryptohack.org.pcapng` 的公开 TLS 1.3 示例；仓库许可证为 MIT。
 - https://www.nfstream.org/docs/api — NFStream API 文档。
+
+## TLS 1.3 样本结果
+
+在 `tls3.cryptohack.org.pcapng` 上，NFStream 识别出一条 TCP/443 TLS 流：29 个双向包、8,075 字节、188 ms 持续时间，并输出 24 个 SPLT 方向、包长和包间隔位置。该样本的 NFStream `application_name` 为 `TLS`。NFStream 的基础流对象在该运行配置中未输出 JA3 或 SNI 字段；现有解析器仍负责 TLS 版本、JA3 与 SNI 可见性详情。该边界说明 NFStream 应与协议解析器并联，而不应替代其 TLS 细节采集。
+
+## 加密恶意流量候选
+
+Stratosphere IPS 的 MCFP CTU-Malware-Capture-Botnet-42 公开提供 `botnet-capture-20110810-neris.pcap`，并说明该 PCAP 仅含 botnet 流量。页面同时提供标签说明：`From-Botnet` 是恶意流，`To-Botnet` 不应仅因目标地址而自动标为恶意；使用数据应引用 Malware Capture Facility Project。验证流程只允许下载和处理公开 PCAP 与标签文件，禁止下载、解压或执行同目录恶意二进制 ZIP。
+
+MCFP 的详细双向流标签文件为 Argus 二进制格式，当前运行环境没有可靠的 `ra` 转换器，因此不应将其二进制片段直接喂入模型。另有 CTU-13 CSV 镜像可读出 botnet 与 normal 流特征，但镜像未声明许可证；它只能作为字段格式参考，不能替代原始数据的许可与引用要求。
