@@ -1,7 +1,7 @@
 import type { Express } from "express";
-import { storageGetSignedUrl } from "../storage";
+import { getLocalStoredFilePath, storageGetSignedUrl } from "../storage";
 
-/** Redirects file requests to short-lived object-store URLs without exposing credentials. */
+/** Serves local protected files or redirects object-store files without exposing credentials. */
 export function registerStorageProxy(app: Express) {
   app.get(["/manus-storage/*", "/api/storage/*"], async (req, res) => {
     const key = (req.params as Record<string, string>)[0];
@@ -10,12 +10,19 @@ export function registerStorageProxy(app: Express) {
       return;
     }
     try {
-      const url = await storageGetSignedUrl(decodeURIComponent(key));
+      const decodedKey = decodeURIComponent(key);
+      const localPath = await getLocalStoredFilePath(decodedKey);
       res.set("Cache-Control", "no-store");
-      res.redirect(307, url);
+      if (localPath) {
+        res.sendFile(localPath, error => {
+          if (error && !res.headersSent) res.status(404).send("Stored file not found");
+        });
+        return;
+      }
+      res.redirect(307, await storageGetSignedUrl(decodedKey));
     } catch (error) {
       console.error("[StorageProxy] failed:", error);
-      res.status(502).send("Storage backend error");
+      res.status(404).send("Storage backend error");
     }
   });
 }
